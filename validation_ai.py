@@ -337,6 +337,7 @@ def _build_ad_agency_prompts(user_data: Any) -> Tuple[str, str]:
         "- Do not invent URLs, emails, or names.\n"
         "- Normalize all URLs to include `https://`.\n"
         "- Deduplicate all lists (e.g., `known_domains`, `sources`).\n"
+        "- **All phone numbers must be formatted with the correct country calling code, for example, `+1 (555) 555-5555` for US/Canada numbers.**\n"
         "- If multiple candidates exist for a field, pick the most authoritative or include the top 3.\n"
         "- Output only the JSON object, with no prose or explanation outside of it.\n\n"
         f"Seed hints:\n{data_block}"
