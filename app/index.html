@@ -1,0 +1,1206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Mirrored Stacked Bars with Today Highlight</title>
+
+<!-- Font Awesome for icons -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script type="text/javascript" src="https://js.zohostatic.com/creator/widgets/version/1.0/widgetsdk-min.js"></script>
+
+<!-- Zoho Creator REST API Configuration -->
+<script>
+// Zoho Creator REST API Configuration
+const ZOHO_CONFIG = {
+  // Replace these with your actual values
+  clientId: '1000.NHPZ1CTLITJBBNG4WQCL1OC8GOEFIG',
+  clientSecret: '07dcee8c0291f26b1ae6ed6c6ee040a02e530fecc2',
+  refreshToken: '1000.2e9f82d7cd4485477685fc15398d0637.0f5e7a7f227a9a5a121fc0a626f7a272',
+  appOwnerName: 'precisionfleetgear', // e.g., 'creator'
+  appName: 'precision-ops', // e.g., 'your-app-name'
+  baseUrl: 'https://creator.zoho.com'
+};
+
+// Cache for access token to avoid unnecessary requests
+let accessTokenCache = {
+  token: null,
+  expiresAt: 0
+};
+
+// Function to get access token using refresh token
+async function getAccessToken() {
+  try {
+    // Check if we have a valid cached token
+    const now = Date.now();
+    if (accessTokenCache.token && now < accessTokenCache.expiresAt) {
+      console.log('Using cached access token');
+      return accessTokenCache.token;
+    }
+
+    console.log('Getting new access token...');
+    const response = await fetch('https://accounts.zoho.com/oauth/v2/token', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        refresh_token: ZOHO_CONFIG.refreshToken,
+        client_id: ZOHO_CONFIG.clientId,
+        client_secret: ZOHO_CONFIG.clientSecret,
+        grant_type: 'refresh_token'
+      })
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Token request failed:', response.status, errorText);
+      throw new Error(`Token request failed: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+    
+    // Cache the token with expiration (subtract 5 minutes for safety)
+    accessTokenCache = {
+      token: data.access_token,
+      expiresAt: now + (data.expires_in * 1000) - (5 * 60 * 1000) // 5 minutes buffer
+    };
+    
+    console.log('Access token obtained and cached');
+    return data.access_token;
+  } catch (error) {
+    console.error('Error getting access token:', error);
+    throw error;
+  }
+}
+
+// Function to make API calls to Zoho Creator
+async function callZohoAPI(endpoint, params = {}) {
+  try {
+    const accessToken = await getAccessToken();
+    
+    const url = `${ZOHO_CONFIG.baseUrl}/api/v2/${ZOHO_CONFIG.appOwnerName}/${ZOHO_CONFIG.appName}${endpoint}`;
+    
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Zoho-oauthtoken ${accessToken}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`API request failed: ${response.status} ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error calling Zoho API:', error);
+    throw error;
+  }
+}
+
+// Function to get all records from a report
+async function getReportRecords(reportName, criteria = '') {
+  let endpoint = `/report/${reportName}`;
+  if (criteria) {
+    endpoint += `?criteria=${encodeURIComponent(criteria)}`;
+  }
+  
+  return await callZohoAPI(endpoint);
+}
+
+// Function to help generate refresh token (run this in browser console)
+function generateRefreshToken() {
+  const authUrl = `https://accounts.zoho.com/oauth/v2/auth?response_type=code&client_id=${ZOHO_CONFIG.clientId}&scope=ZohoCreator.reports.READ&redirect_uri=http://localhost&access_type=offline`;
+  
+  console.log('Step 1: Open this URL in your browser:');
+  console.log(authUrl);
+  console.log('\nStep 2: After authorization, copy the "code" parameter from the redirect URL');
+  console.log('\nStep 3: Use this function with the code:');
+  console.log('exchangeCodeForToken("YOUR_AUTHORIZATION_CODE")');
+  
+  // Make the function available globally
+  window.exchangeCodeForToken = async function(code) {
+    try {
+      const response = await fetch('https://accounts.zoho.com/oauth/v2/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded',
+        },
+        body: new URLSearchParams({
+          code: code,
+          client_id: ZOHO_CONFIG.clientId,
+          client_secret: ZOHO_CONFIG.clientSecret,
+          redirect_uri: 'http://localhost',
+          grant_type: 'authorization_code'
+        })
+      });
+
+      const data = await response.json();
+      
+      if (data.refresh_token) {
+        console.log('✅ Refresh token obtained:');
+        console.log(data.refresh_token);
+        console.log('\nCopy this to your ZOHO_CONFIG.refreshToken');
+      } else {
+        console.error('❌ No refresh token in response:', data);
+      }
+      
+      return data;
+    } catch (error) {
+      console.error('Error exchanging code for token:', error);
+    }
+  };
+}
+</script>
+<style>
+  :root {
+    --bg: #000000;
+    --card: #1a1a1a;
+    --muted: #cccccc;
+    --grid: #333333;
+    --ring: #ff800033;
+    --label: #ffffff;
+    --accent: #ff8000;
+  }
+  body {
+    margin: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, "Helvetica Neue", Arial;
+    background: var(--bg);
+    color: var(--label);
+    display: grid;
+    place-items: start center;
+    padding: 24px;
+  }
+  .wrap {
+    /* width: min(1100px, 95vw); */
+    width: 100%;
+  }
+  .panel {
+    position: relative; /* needed for the overlay line */
+    background: var(--card);
+    border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(0,0,0,.25), inset 0 0 0 1px #ffffff06;
+    padding: 16px;
+  }
+  .grid {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 0;
+    align-items: stretch;
+  }
+  
+  .chart-container {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  
+  .chart-label-side {
+    text-transform: uppercase;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 1.2px;
+    font-weight: 600;
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    transform: rotate(180deg);
+    white-space: nowrap;
+    min-width: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .chart-label {
+    text-transform: uppercase;
+    font-size: 12px;
+    color: var(--muted);
+    letter-spacing: 1.2px;
+    margin: 0;
+    display: none; /* Hide the original labels */
+  }
+     /* Center day strip */
+   .day-strip {
+     display: grid;
+     grid-template-columns: repeat(10, 1fr);
+     gap: 6px;
+     align-items: stretch;
+     justify-content: center;
+     padding: 10px 12px;
+     border-radius: 0;
+     /* background: linear-gradient(180deg, #1a2431, #15202b); */
+     /* box-shadow: inset 0 0 0 1px #ffffff12, 0 0 0 6px var(--ring); */
+     user-select: none;
+     z-index: 10;
+     position: relative;
+     margin-left: 53px; /* Account for chart-label-side width + gap */
+     margin-right: 4px;
+   }
+  .day-pill {
+    display: grid;
+    grid-template-rows: auto auto;
+    align-items: center;
+    justify-items: center;
+    padding: 8px 6px 6px;
+    border-radius: 10px;
+    background: #1a1a1a;
+    color: #ffffff;
+    border: 1px solid #333333;
+    text-transform: uppercase;
+    font-size: 12px;
+    text-align: center;
+    min-width: 44px;
+    line-height: 1.1;
+  }
+  .day-pill .dow { font-weight: 700; letter-spacing: .4px; }
+  .day-pill .daynum { font-size: 11px; color: #cccccc; opacity: .9; }
+  .day-pill.current {
+    background: radial-gradient(120px 60px at 50% -10%, #ff8000, #1a1a1a);
+    border-color: #ff8000;
+    box-shadow: 0 0 0 2px rgba(255, 128, 0, 0.3);
+    color: #ffffff;
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 16px;
+    margin-bottom: 10px;
+  }
+  .legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .swatch {
+    width: 12px; height: 12px; border-radius: 3px;
+    box-shadow: 0 0 0 1px #00000055, inset 0 0 0 1px #ffffff22;
+  }
+  .tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: #1a1a1a;
+    color: #ffffff;
+    border: 1px solid #ff8000;
+    padding: 8px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    opacity: 0;
+    transition: opacity .12s ease-out, transform .12s ease-out;
+    transform: translateY(4px);
+    z-index: 50;
+    white-space: nowrap;
+  }
+  svg {
+    width: 100%;
+    height: 260px;
+    display: block;
+    background: #000000;
+    border-radius: 0;
+    box-shadow: inset 0 0 0 1px #333333;
+  }
+  .gridline {
+    stroke: var(--grid);
+    stroke-width: 1;
+    shape-rendering: crispEdges;
+  }
+  
+  /* Loading indicator */
+  .loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    color: var(--muted);
+  }
+  .loading svg {
+    width: 20px;
+    height: 20px;
+    margin-right: 10px;
+    animation: spin 1s linear infinite;
+  }
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  
+  /* Info window styles */
+  .info-window {
+    position: fixed;
+    top: 20px;
+    right: 20px;
+    background: rgba(26, 26, 26, 0.95);
+    backdrop-filter: blur(10px);
+    border-radius: 6px;
+    padding: 6px 10px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    z-index: 1001;
+    font-size: 0.75rem;
+    color: #ffffff;
+    white-space: nowrap;
+  }
+  
+  .info-window .info-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  
+  .info-separator {
+    color: #666666;
+    margin: 0 4px;
+  }
+  
+  .info-label {
+    font-weight: 500;
+    color: #cccccc;
+  }
+  
+  .info-value {
+    font-weight: 600;
+    color: #ffffff;
+  }
+  
+  .countdown {
+    color: #ff8000;
+  }
+  
+  .countdown.warning {
+    color: #ffd700;
+  }
+  
+  .countdown.critical {
+    color: #ff4444;
+  }
+  
+
+  
+
+</style>
+</head>
+<body>
+  <div class="wrap panel" id="panel">
+    <div class="legend" id="legend"></div>
+
+         <div class="grid" id="grid">
+       <div class="chart-container">
+         <div class="chart-label-side">Complete</div>
+         <svg id="chart-complete" role="img" aria-label="Stacked bar chart showing tasks completed per day"></svg>
+       </div>
+
+       <div class="day-strip" id="day-strip"></div>
+
+       <div class="chart-container">
+         <div class="chart-label-side">Due</div>
+         <svg id="chart-due" role="img" aria-label="Stacked bar chart showing tasks due per day (mirrored)"></svg>
+       </div>
+     </div>
+
+    
+  </div>
+
+  <div class="tooltip" id="tooltip"></div>
+
+  <!-- Info Window -->
+  <div id="info-window" class="info-window" style="display: none;">
+    <div class="info-content">
+      <i class="fas fa-clock"></i>
+      <span class="info-label">Updated:</span>
+      <span class="info-value" id="last-updated">--</span>
+      <span class="info-separator">|</span>
+      <span class="info-label">Next:</span>
+      <span class="info-value countdown" id="next-update">--</span>
+    </div>
+  </div>
+
+<script>
+/* =========================
+   0) Date helpers
+   ========================= */
+const fmt = new Intl.DateTimeFormat(undefined, { day: '2-digit' }); // local day number
+const fmtDow = new Intl.DateTimeFormat(undefined, { weekday: 'short' }); // Mon, Tue...
+
+// Get Monday of a given date (local timezone)
+function mondayOf(date) {
+  const d = new Date(date);
+  const day = (d.getDay() + 6) % 7; // 0=Mon..6=Sun
+  d.setHours(0,0,0,0);
+  d.setDate(d.getDate() - day);
+  return d;
+}
+
+function sameYMD(a, b) {
+  return a.getFullYear() === b.getFullYear() &&
+         a.getMonth() === b.getMonth() &&
+         a.getDate() === b.getDate();
+}
+
+// Helper function to check if a date is overdue
+function isOverdue(dueDateString, isComplete = false) {
+  if (!dueDateString || dueDateString === 'N/A' || isComplete) {
+    return false;
+  }
+  
+  try {
+    // Parse the date string (format: "23-Jul-2025")
+    const [day, month, year] = dueDateString.split('-');
+    const monthMap = {
+      'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+      'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+    };
+    
+    const dueDate = new Date(parseInt(year), monthMap[month], parseInt(day));
+    const today = new Date();
+    
+    // Reset time to start of day for accurate comparison
+    today.setHours(0, 0, 0, 0);
+    dueDate.setHours(0, 0, 0, 0);
+    
+    return dueDate < today;
+  } catch (error) {
+    console.error('Error parsing due date:', dueDateString, error);
+    return false;
+  }
+}
+
+// Helper function to check if assignment is complete
+function isAssignmentComplete(assignment) {
+  const currentStage = assignment.Stage || '';
+  const completionDate = assignment.Completion_Date || '';
+  return currentStage === 'Complete' || currentStage === 'Completed' || completionDate !== '';
+}
+
+/* =========================
+   1) Config & data fetching
+   ========================= */
+const tasks = ["Wood", "Steel", "Aluminum", "Welding", "Powder Coating", "Hardware", "Assembly | Boxing | Labeling"]; // 7 task types
+const color = d3.scaleOrdinal()
+  .domain(tasks)
+  .range([
+    "#8B4513", // Brown (Wood)
+    "#708090", // Steel Gray
+    "#C0C0C0", // Silver (Aluminum)
+    "#FF4500", // Orange Red (Welding)
+    "#FFD700", // Gold (Powder Coating)
+    "#4169E1", // Royal Blue (Hardware)
+    "#32CD32"  // Lime Green (Assembly)
+  ]); // Material-appropriate colors
+
+// Determine the 10-weekday window (2 weeks of weekdays only)
+const startMonday = mondayOf(new Date());
+const windowDates = [];
+let currentDate = new Date(startMonday);
+let weekdayCount = 0;
+
+while (weekdayCount < 10) {
+  const dayOfWeek = currentDate.getDay();
+  // Only include Monday (1) through Friday (5)
+  if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+    windowDates.push(new Date(currentDate));
+    weekdayCount++;
+  }
+  currentDate.setDate(currentDate.getDate() + 1);
+}
+const daysShort = windowDates.map(d => fmtDow.format(d).slice(0,3)); // Mon... (short)
+const today = new Date(); today.setHours(0,0,0,0);
+const todayIndex = windowDates.findIndex(d => sameYMD(d, today)); // -1 if out of range
+
+// Global data storage
+let completeData = [];
+let dueData = [];
+
+// Auto-refresh variables
+let lastUpdateTime = null;
+let nextUpdateTime = null;
+let refreshInterval = null;
+let countdownInterval = null;
+const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+
+// Function to update info window
+function updateInfoWindow() {
+  const lastUpdatedElement = document.getElementById('last-updated');
+  const nextUpdateElement = document.getElementById('next-update');
+  
+  if (lastUpdateTime && lastUpdatedElement) {
+    lastUpdatedElement.textContent = lastUpdateTime.toLocaleTimeString();
+  }
+  
+  if (nextUpdateTime && nextUpdateElement) {
+    const now = new Date();
+    const timeUntilNext = nextUpdateTime - now;
+    
+    if (timeUntilNext <= 0) {
+      nextUpdateElement.textContent = 'Refreshing...';
+      nextUpdateElement.className = 'info-value countdown critical';
+    } else {
+      const minutes = Math.floor(timeUntilNext / 60000);
+      const seconds = Math.floor((timeUntilNext % 60000) / 1000);
+      nextUpdateElement.textContent = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+      
+      // Color coding based on time remaining
+      if (timeUntilNext <= 30000) { // 30 seconds or less
+        nextUpdateElement.className = 'info-value countdown critical';
+      } else if (timeUntilNext <= 120000) { // 2 minutes or less
+        nextUpdateElement.className = 'info-value countdown warning';
+      } else {
+        nextUpdateElement.className = 'info-value countdown';
+      }
+    }
+  }
+}
+
+// Function to start countdown timer
+function startCountdown() {
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+  }
+  
+  countdownInterval = setInterval(updateInfoWindow, 1000); // Update every second
+}
+
+// Function to schedule next refresh
+function scheduleNextRefresh() {
+  if (refreshInterval) {
+    clearInterval(refreshInterval);
+  }
+  
+  nextUpdateTime = new Date(Date.now() + REFRESH_INTERVAL_MS);
+  refreshInterval = setInterval(refreshData, REFRESH_INTERVAL_MS);
+  startCountdown();
+}
+
+// Function to refresh data
+function refreshData() {
+  console.log('Auto-refreshing data...');
+  lastUpdateTime = new Date();
+  updateInfoWindow();
+  
+  // Reload all data
+  loadDataFromZoho();
+}
+
+// Function to show info window
+function showInfoWindow() {
+  const infoWindow = document.getElementById('info-window');
+  if (infoWindow) {
+    infoWindow.style.display = 'block';
+  }
+}
+
+
+
+// Function to load data from Zoho Creator (SDK method)
+async function loadDataFromZohoSDK() {
+  try {
+    console.log("Initializing Zoho Creator SDK...");
+    
+    // Check if ZOHO.CREATOR is available
+    if (!window.ZOHO || !window.ZOHO.CREATOR) {
+      throw new Error("Zoho Creator SDK not available - check if running in Zoho Creator environment");
+    }
+    
+    console.log("Attempting SDK initialization...");
+    const creatorSdkPromise = ZOHO.CREATOR.init();
+    
+    const data = await creatorSdkPromise;
+    const recordOps = ZOHO.CREATOR.API;
+    
+    console.log("SDK initialized successfully, fetching data...");
+    
+    // Fetch all assignments
+    const assignmentsConfig = {
+      reportName: "Dashboard_Assignments"
+    };
+    
+    console.log("Fetching assignments from report: Dashboard_Assignments");
+    const assignmentsData = await recordOps.getAllRecords(assignmentsConfig);
+    console.log("Assignments data:", assignmentsData);
+    
+    // Fetch all tasks
+    const tasksConfig = {
+      reportName: "All_Assignment_Tasks"
+    };
+    
+    console.log("Fetching tasks from report: All_Assignment_Tasks");
+    const tasksData = await recordOps.getAllRecords(tasksConfig);
+    console.log("Tasks data:", tasksData);
+    
+    // Process the data
+    processDataForCharts(assignmentsData, tasksData);
+    
+  } catch (error) {
+    console.error("Error loading data from Zoho SDK:", error);
+    
+    // Provide more specific error messages
+    if (error.message.includes('Parentwindow reference not found')) {
+      throw new Error("SDK cannot find parent window - ensure this is running within Zoho Creator");
+    } else if (error.message.includes('permissions')) {
+      throw new Error("SDK permissions error - check user permissions in Zoho Creator");
+    } else {
+      throw new Error(`SDK Error: ${error.message}`);
+    }
+  }
+}
+
+// Function to load data from Zoho Creator (Flask Proxy method)
+async function loadDataFromZohoREST() {
+  try {
+    console.log("Loading data using Flask proxy...");
+    
+    // Determine the base URL for API calls
+    const isLocalhost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+    const baseUrl = isLocalhost ? '' : 'https://flask-production-aff4.up.railway.app';
+    
+    // Check if Flask server is available
+    try {
+      const healthCheck = await fetch(`${baseUrl}/api/zoho/health`);
+      if (!healthCheck.ok) {
+        throw new Error('Flask server not responding');
+      }
+      const health = await healthCheck.json();
+      console.log("Flask server health:", health);
+    } catch (error) {
+      throw new Error('Flask server not available. Make sure the Zoho blueprint is registered in your Flask app.');
+    }
+    
+    // Fetch all assignments
+    console.log("Fetching assignments data...");
+    const assignmentsResponse = await fetch(`${baseUrl}/api/zoho/reports/Dashboard_Assignments`);
+    if (!assignmentsResponse.ok) {
+      throw new Error(`Failed to fetch assignments: ${assignmentsResponse.status}`);
+    }
+    const assignmentsResult = await assignmentsResponse.json();
+    console.log("Assignments data:", assignmentsResult);
+    
+    if (!assignmentsResult.success) {
+      throw new Error(`Assignments API error: ${assignmentsResult.error}`);
+    }
+    
+    // Fetch all tasks
+    console.log("Fetching tasks data...");
+    const tasksResponse = await fetch(`${baseUrl}/api/zoho/reports/All_Assignment_Tasks`);
+    if (!tasksResponse.ok) {
+      throw new Error(`Failed to fetch tasks: ${tasksResponse.status}`);
+    }
+    const tasksResult = await tasksResponse.json();
+    console.log("Tasks data:", tasksResult);
+    
+    if (!tasksResult.success) {
+      throw new Error(`Tasks API error: ${tasksResult.error}`);
+    }
+    
+    // Process the data
+    processDataForCharts(assignmentsResult.data, tasksResult.data);
+    
+  } catch (error) {
+    console.error("Error loading data from Flask proxy:", error);
+    // Show error in UI
+    document.getElementById('legend').innerHTML = `
+      <div class="loading">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <div style="text-align: center; max-width: 400px;">
+          <h3>Server Connection Error</h3>
+          <p>${error.message}</p>
+          <h4>Setup Instructions:</h4>
+          <ol style="text-align: left; margin: 10px 0;">
+            <li>Add the Zoho blueprint to your Flask app</li>
+            <li>Deploy the updated Flask app to Railway</li>
+            <li>Access the charts at: <code>https://flask-production-aff4.up.railway.app/charts</code></li>
+          </ol>
+        </div>
+      </div>
+    `;
+  }
+}
+
+// Main function to load data (tries SDK first, then REST API)
+async function loadDataFromZoho() {
+  // Check if we're in a Zoho Creator iframe environment
+  const isInZohoCreator = window.self !== window.top && 
+                         window.location.href.includes('zoho.com');
+  
+  // Check if we're running from file:// protocol (local file)
+  const isLocalFile = window.location.protocol === 'file:';
+  
+  if (isInZohoCreator) {
+    // In Zoho Creator - SDK only (REST API blocked by CSP)
+    console.log("Running in Zoho Creator environment, using SDK only...");
+    try {
+      await loadDataFromZohoSDK();
+    } catch (error) {
+      console.error("SDK failed in Zoho Creator environment:", error);
+      // Show user-friendly error message
+      document.getElementById('legend').innerHTML = `
+        <div class="loading">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          Unable to load data in Zoho Creator environment.<br>
+          <small>Try opening this page in a new tab or contact your administrator.</small>
+        </div>
+      `;
+    }
+  } else if (isLocalFile) {
+    // Local file - show instructions for proper setup
+    console.log("Running from local file - CORS will block API calls");
+    document.getElementById('legend').innerHTML = `
+      <div class="loading">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+        <div style="text-align: center; max-width: 400px;">
+          <h3>Railway Deployment Required</h3>
+          <p>This application requires the Flask server to be deployed on Railway for API access.</p>
+          <h4>Setup Steps:</h4>
+          <ol style="text-align: left; margin: 10px 0;">
+            <li><strong>Add Zoho blueprint:</strong> Include <code>zoho_bp.py</code> in your Flask app</li>
+            <li><strong>Update main.py:</strong> Register the blueprint and add static file serving</li>
+            <li><strong>Deploy to Railway:</strong> Push your updated Flask app</li>
+            <li><strong>Access charts:</strong> <code>https://flask-production-aff4.up.railway.app/charts</code></li>
+          </ol>
+          <p><small>Or use as a Zoho Creator widget for direct SDK access</small></p>
+        </div>
+      </div>
+    `;
+  } else {
+    // Web server environment - use REST API directly
+    console.log("Running on web server, using REST API...");
+    await loadDataFromZohoREST();
+  }
+}
+
+// Function to process assignments and tasks data for charts
+function processDataForCharts(assignmentsData, tasksData) {
+  console.log("Processing data for charts...");
+  
+  // Initialize data structures for each day
+  const completeDataByDay = {};
+  const dueDataByDay = {};
+  
+  // Initialize all days with zero counts
+  windowDates.forEach((date, index) => {
+    const dayKey = daysShort[index];
+    completeDataByDay[dayKey] = {};
+    dueDataByDay[dayKey] = {};
+    tasks.forEach(task => {
+      completeDataByDay[dayKey][task] = 0;
+      dueDataByDay[dayKey][task] = 0;
+    });
+  });
+  
+  // Process assignments data
+  if (assignmentsData && assignmentsData.data) {
+    assignmentsData.data.forEach(assignment => {
+      const dueDate = assignment.Due_Date || 'N/A';
+      const isComplete = isAssignmentComplete(assignment);
+      const assignmentType = assignment['Inventory_Item.Assignment_Type'] || 'N/A';
+      
+      // Map assignment type to task category
+      const taskCategory = mapAssignmentTypeToTask(assignmentType);
+      
+      if (taskCategory) {
+        // Check if due date falls within our window
+        const dueDateObj = parseZohoDate(dueDate);
+        if (dueDateObj) {
+          const dayIndex = windowDates.findIndex(d => sameYMD(d, dueDateObj));
+          if (dayIndex !== -1) {
+            const dayKey = daysShort[dayIndex];
+            
+            if (isComplete) {
+              // Count as completed
+              completeDataByDay[dayKey][taskCategory]++;
+            } else {
+              // Count as due
+              dueDataByDay[dayKey][taskCategory]++;
+            }
+          }
+        }
+      }
+    });
+  }
+  
+  // Process tasks data for more granular tracking
+  if (tasksData && tasksData.data) {
+    tasksData.data.forEach(task => {
+      const dueDate = task.Due_Date || 'N/A';
+      const isComplete = task.Complete === 'true';
+      const assignmentType = task['Inventory_Item.Assignment_Type'] || 'N/A';
+      
+      // Map assignment type to task category
+      const taskCategory = mapAssignmentTypeToTask(assignmentType);
+      
+      if (taskCategory) {
+        // Check if due date falls within our window
+        const dueDateObj = parseZohoDate(dueDate);
+        if (dueDateObj) {
+          const dayIndex = windowDates.findIndex(d => sameYMD(d, dueDateObj));
+          if (dayIndex !== -1) {
+            const dayKey = daysShort[dayIndex];
+            
+            if (isComplete) {
+              // Count as completed
+              completeDataByDay[dayKey][taskCategory]++;
+            } else {
+              // Count as due
+              dueDataByDay[dayKey][taskCategory]++;
+            }
+          }
+        }
+      }
+    });
+  }
+  
+  // Convert to D3-friendly format
+  completeData = windowDates.map((date, index) => {
+    const dayKey = daysShort[index];
+    const dayData = { day: dayKey };
+    tasks.forEach(task => {
+      dayData[task] = completeDataByDay[dayKey][task] || 0;
+    });
+    return dayData;
+  });
+  
+  dueData = windowDates.map((date, index) => {
+    const dayKey = daysShort[index];
+    const dayData = { day: dayKey };
+    tasks.forEach(task => {
+      dayData[task] = dueDataByDay[dayKey][task] || 0;
+    });
+    return dayData;
+  });
+  
+  console.log("Processed complete data:", completeData);
+  console.log("Processed due data:", dueData);
+  
+  // Update legend and render charts
+  updateLegend();
+  render();
+  
+  // Initialize info window and schedule refresh
+  lastUpdateTime = new Date();
+  showInfoWindow();
+  updateInfoWindow();
+  scheduleNextRefresh();
+}
+
+// Function to map assignment types to task categories
+function mapAssignmentTypeToTask(assignmentType) {
+  const typeMap = {
+    'Wood': 'Wood',
+    'Steel': 'Steel',
+    'Aluminum': 'Aluminum',
+    'Welding': 'Welding',
+    'Powder Coating': 'Powder Coating',
+    'Hardware': 'Hardware',
+    'Assembly': 'Assembly | Boxing | Labeling',
+    'Boxing': 'Assembly | Boxing | Labeling',
+    'Labeling': 'Assembly | Boxing | Labeling'
+  };
+  
+  // Try exact match first
+  if (typeMap[assignmentType]) {
+    return typeMap[assignmentType];
+  }
+  
+  // Try partial matches
+  for (const [key, value] of Object.entries(typeMap)) {
+    if (assignmentType.toLowerCase().includes(key.toLowerCase())) {
+      return value;
+    }
+  }
+  
+  // Default mapping based on common patterns
+  if (assignmentType.toLowerCase().includes('wood')) return 'Wood';
+  if (assignmentType.toLowerCase().includes('steel')) return 'Steel';
+  if (assignmentType.toLowerCase().includes('aluminum')) return 'Aluminum';
+  if (assignmentType.toLowerCase().includes('weld')) return 'Welding';
+  if (assignmentType.toLowerCase().includes('powder') || assignmentType.toLowerCase().includes('coating')) return 'Powder Coating';
+  if (assignmentType.toLowerCase().includes('hardware')) return 'Hardware';
+  if (assignmentType.toLowerCase().includes('assembly') || assignmentType.toLowerCase().includes('box') || assignmentType.toLowerCase().includes('label')) return 'Assembly | Boxing | Labeling';
+  
+  // Default to Assembly if no match found
+  return 'Assembly | Boxing | Labeling';
+}
+
+// Function to parse Zoho date format
+function parseZohoDate(dateString) {
+  if (!dateString || dateString === 'N/A') {
+    return null;
+  }
+  
+  try {
+    // Parse the date string (format: "23-Jul-2025")
+    const [day, month, year] = dateString.split('-');
+    const monthMap = {
+      'Jan': 0, 'Feb': 1, 'Mar': 2, 'Apr': 3, 'May': 4, 'Jun': 5,
+      'Jul': 6, 'Aug': 7, 'Sep': 8, 'Oct': 9, 'Nov': 10, 'Dec': 11
+    };
+    
+    return new Date(parseInt(year), monthMap[month], parseInt(day));
+  } catch (error) {
+    console.error('Error parsing Zoho date:', dateString, error);
+    return null;
+  }
+}
+
+/* =========================
+   2) Legend
+   ========================= */
+function updateLegend() {
+  const legend = d3.select("#legend");
+  legend.html(''); // Clear existing legend
+  
+  tasks.forEach(t => {
+    const item = legend.append("span").attr("class", "legend-item");
+    item.append("span").attr("class","swatch").style("background", color(t));
+    item.append("span").text(t);
+  });
+}
+
+/* =========================
+   3) Day strip with highlight & day number
+   ========================= */
+const dayStrip = d3.select("#day-strip");
+dayStrip.selectAll(".day-pill")
+  .data(windowDates)
+  .join("div")
+  .attr("class", (d,i) => "day-pill" + (i === todayIndex ? " current" : ""))
+  .attr("data-index", (_,i)=>i)
+  .html(d => `
+    <span class="dow">${fmtDow.format(d).slice(0,3)}</span>
+    <span class="daynum">${fmt.format(d)}</span>
+  `);
+
+/* =========================
+   4) Chart builder (same as before)
+   ========================= */
+function drawMirroredStackedChart({
+  svgSelector,
+  data,
+  direction = "up", // "up" for Complete, "down" for Due
+  margin = { top: 14, right: 16, bottom: 16, left: 32 },
+  maxYValue = null // Allow passing in a shared max value
+}) {
+  const svg = d3.select(svgSelector);
+  const node = svg.node();
+  const { width, height } = node.getBoundingClientRect();
+  svg.selectAll("*").remove();
+
+  const innerW = width - margin.left - margin.right;
+  const innerH = height - margin.top - margin.bottom;
+
+  const g = svg.append("g")
+    .attr("transform", `translate(${margin.left},${margin.top})`);
+
+  // X scale by weekday index (10 weekdays)
+  const x = d3.scaleBand()
+    .domain(d3.range(windowDates.length))
+    .range([0, innerW])
+    .paddingInner(0.12)
+    .paddingOuter(0.04);
+
+  // Stack data by task keys
+  const stack = d3.stack().keys(tasks);
+  const series = stack(data);
+
+  // Compute max sum per day to set Y scale
+  const localMaxY = d3.max(data, d => d3.sum(tasks, t => Math.max(0, d[t]))) || 0;
+  
+  // Use the shared max value if provided, otherwise use local max
+  const maxY = maxYValue !== null ? maxYValue : localMaxY;
+
+  // Y scale
+  const y = d3.scaleLinear()
+    .domain([0, maxY])
+    .range([innerH, 0]);
+
+  // Generate whole number ticks (no decimals)
+  const tickCount = Math.min(6, Math.max(3, Math.ceil(maxY)));
+  const ticks = [];
+  for (let i = 0; i <= tickCount; i++) {
+    const tickValue = Math.round((maxY / tickCount) * i);
+    if (tickValue <= maxY) {
+      ticks.push(tickValue);
+    }
+  }
+
+  // Grid lines
+  g.append("g")
+    .selectAll("line.gridline")
+    .data(ticks)
+    .join("line")
+    .attr("class","gridline")
+    .attr("x1", 0)
+    .attr("x2", innerW)
+    .attr("y1", d => y(d))
+    .attr("y2", d => y(d));
+
+  // Y-axis labels
+  g.append("g")
+    .selectAll("text.y-label")
+    .data(ticks)
+    .join("text")
+    .attr("class", "y-label")
+    .attr("x", -8)
+    .attr("y", d => direction === "down" ? innerH - y(d) : y(d))
+    .attr("dy", "0.32em")
+    .attr("text-anchor", "end")
+    .attr("fill", "var(--muted)")
+    .attr("font-size", "11px")
+    .text(d => d);
+
+
+
+  // Plot group (flip vertically for "down")
+  const plot = g.append("g")
+    .attr("transform", direction === "down" ? `translate(0,${innerH}) scale(1,-1)` : null);
+
+  // Bars
+  const groups = plot.selectAll("g.layer")
+    .data(series, s => s.key)
+    .join("g")
+    .attr("class","layer")
+    .attr("fill", s => color(s.key));
+
+  const tooltip = d3.select("#tooltip");
+
+  groups.selectAll("rect")
+    .data(d => d.map((seg, i) => ({ key: d.key, i, seg, value: data[i][d.key], day: data[i].day })))
+    .join("rect")
+    .attr("x", d => x(d.i))
+    .attr("width", x.bandwidth())
+    .attr("y", d => y(d.seg[1]))
+    .attr("height", d => Math.max(0, y(d.seg[0]) - y(d.seg[1])))
+    .attr("rx", 3).attr("ry", 3)
+    .on("pointerenter pointermove", function (event, d) {
+      const dirWord = (direction === "down") ? "Due" : "Complete";
+      tooltip
+        .style("opacity", 1)
+        .style("transform", "translateY(0)")
+        .html(`
+          <strong>${dirWord}</strong><br/>
+          Day: ${d.day} (#${d.i+1})<br/>
+          Task: ${d.key}<br/>
+          Value: ${d.value}
+        `);
+      const { pageX, pageY } = event;
+      tooltip.style("left", (pageX + 14) + "px")
+             .style("top",  (pageY + 14) + "px");
+    })
+    .on("pointerleave", () => {
+      tooltip.style("opacity", 0).style("transform","translateY(4px)");
+    });
+
+     // Add value labels inside bars (added to main group to avoid transform issues)
+   g.selectAll("text.value-label")
+     .data(data.flatMap((d, i) => 
+       tasks.map(task => ({
+         task,
+         i,
+         value: d[task],
+         day: d.day,
+         y: y(d3.sum(tasks.slice(0, tasks.indexOf(task)), t => d[t])) + (y(d[task]) - y(0)) / 2
+       }))
+     ))
+     .join("text")
+     .attr("class", "value-label")
+     .attr("x", d => x(d.i) + x.bandwidth() / 2)
+     .attr("y", d => direction === "down" ? innerH - d.y : d.y)
+     .attr("dy", "0.32em")
+     .attr("text-anchor", "middle")
+     .attr("fill", "#ffffff")
+     .attr("font-size", "10px")
+     .attr("font-weight", "600")
+     .attr("paint-order", "stroke")
+     .attr("stroke", "#000000")
+     .attr("stroke-width", "3px")
+     .attr("stroke-linecap", "round")
+     .attr("stroke-linejoin", "round")
+     .text(d => d.value > 0 ? d.value : "");
+
+  // Column separators (soft)
+  g.append("g").selectAll("line.colsep")
+    .data(d3.range(windowDates.length))
+    .join("line")
+    .attr("x1", i => x(i) + x.bandwidth()/2)
+    .attr("x2", i => x(i) + x.bandwidth()/2)
+    .attr("y1", 0)
+    .attr("y2", innerH)
+    .attr("stroke", "#ffffff08");
+
+  // Plot outline
+  g.append("rect")
+    .attr("x", 0).attr("y", 0)
+    .attr("width", innerW).attr("height", innerH)
+    .attr("fill", "none")
+    .attr("stroke", "#ffffff10")
+    .attr("rx", 10);
+}
+
+/* =========================
+   5) Render & Today line
+   ========================= */
+function render() {
+  // Calculate the maximum value across both datasets for consistent scaling
+  const maxComplete = d3.max(completeData, d => d3.sum(tasks, t => Math.max(0, d[t]))) || 0;
+  const maxDue = d3.max(dueData, d => d3.sum(tasks, t => Math.max(0, d[t]))) || 0;
+  const sharedMaxY = Math.max(maxComplete, maxDue);
+  
+  console.log("Chart scaling - Max Complete:", maxComplete, "Max Due:", maxDue, "Shared Max:", sharedMaxY);
+  
+  drawMirroredStackedChart({
+    svgSelector: "#chart-complete",
+    data: completeData,
+    direction: "up",
+    maxYValue: sharedMaxY
+  });
+  drawMirroredStackedChart({
+    svgSelector: "#chart-due",
+    data: dueData,
+    direction: "down",
+    maxYValue: sharedMaxY
+  });
+}
+
+// Initialize the application
+document.addEventListener('DOMContentLoaded', function() {
+  // Show loading state
+  document.getElementById('legend').innerHTML = `
+    <div class="loading">
+      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      Loading data from Zoho Creator...
+    </div>
+  `;
+  
+  // Load data from Zoho Creator
+  loadDataFromZoho();
+});
+
+window.addEventListener("resize", render);
+
+// Cleanup intervals when page is unloaded
+window.addEventListener('beforeunload', function() {
+  if (refreshInterval) {
+    clearInterval(refreshInterval);
+  }
+  if (countdownInterval) {
+    clearInterval(countdownInterval);
+  }
+});
+</script>
+</body>
+</html>
