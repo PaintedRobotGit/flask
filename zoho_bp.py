@@ -2,19 +2,10 @@ from flask import Blueprint, request, jsonify
 import requests
 from datetime import datetime, timedelta
 import os
+from config import ZOHO_CONFIG
 
 # Create blueprint
 zoho_bp = Blueprint('zoho', __name__, url_prefix='/api/zoho')
-
-# Zoho Creator Configuration
-ZOHO_CONFIG = {
-    'client_id': '1000.NHPZ1CTLITJBBNG4WQCL1OC8GOEFIG',
-    'client_secret': '07dcee8c0291f26b1ae6ed6c6ee040a02e530fecc2',
-    'refresh_token': '1000.54f436cfb468e679e91b32250171be9b.650fd44864e7ba0912eedece1bb8df2f',
-    'app_owner_name': 'precisionfleetgear',  # Updated to match your config
-    'app_name': 'precision-ops',
-    'base_url': 'https://creator.zoho.com'
-}
 
 # Cache for access token
 access_token_cache = {
@@ -93,8 +84,13 @@ def get_report_data(report_name):
         # Build endpoint
         endpoint = f"/report/{report_name}"
         
+        print(f"Attempting to fetch report: {report_name}")
+        print(f"Full URL will be: {ZOHO_CONFIG['base_url']}/api/v2/{ZOHO_CONFIG['app_owner_name']}/{ZOHO_CONFIG['app_name']}{endpoint}")
+        
         # Make API call
         data = call_zoho_api(endpoint, {'criteria': criteria} if criteria else None)
+        
+        print(f"Successfully fetched data for report: {report_name}")
         
         return jsonify({
             'success': True,
@@ -103,11 +99,28 @@ def get_report_data(report_name):
         })
         
     except Exception as e:
+        print(f"Error fetching report {report_name}: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
         return jsonify({
             'success': False,
             'error': str(e),
             'timestamp': datetime.now().isoformat()
         }), 500
+
+@zoho_bp.route('/config', methods=['GET'])
+def get_config():
+    """Get configuration for frontend"""
+    return jsonify({
+        'clientId': ZOHO_CONFIG['client_id'],
+        'clientSecret': ZOHO_CONFIG['client_secret'],
+        'refreshToken': ZOHO_CONFIG['refresh_token'],
+        'appOwnerName': ZOHO_CONFIG['app_owner_name'],
+        'appName': ZOHO_CONFIG['app_name'],
+        'baseUrl': ZOHO_CONFIG['base_url'],
+        'railwayUrl': ZOHO_CONFIG['railway_url']
+    })
 
 @zoho_bp.route('/health', methods=['GET'])
 def health_check():
@@ -206,3 +219,63 @@ def oauth_callback():
             'success': False,
             'error': 'No authorization code received'
         }), 400
+
+@zoho_bp.route('/test-connection', methods=['GET'])
+def test_connection():
+    """Test Zoho API connection and list available reports"""
+    try:
+        print("Testing Zoho API connection...")
+        
+        # Test access token
+        access_token = get_access_token()
+        print(f"Access token obtained: {access_token[:20]}...")
+        
+        # Test basic API call to list reports
+        url = f"{ZOHO_CONFIG['base_url']}/api/v2/{ZOHO_CONFIG['app_owner_name']}/{ZOHO_CONFIG['app_name']}/report"
+        
+        headers = {
+            'Authorization': f'Zoho-oauthtoken {access_token}',
+            'Content-Type': 'application/json'
+        }
+        
+        print(f"Testing URL: {url}")
+        response = requests.get(url, headers=headers)
+        
+        if response.ok:
+            data = response.json()
+            return jsonify({
+                'success': True,
+                'message': 'Zoho API connection successful',
+                'reports': data.get('reports', []),
+                'config': {
+                    'app_owner': ZOHO_CONFIG['app_owner_name'],
+                    'app_name': ZOHO_CONFIG['app_name'],
+                    'base_url': ZOHO_CONFIG['base_url']
+                }
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': f'Zoho API returned {response.status_code}',
+                'response_text': response.text,
+                'config': {
+                    'app_owner': ZOHO_CONFIG['app_owner_name'],
+                    'app_name': ZOHO_CONFIG['app_name'],
+                    'base_url': ZOHO_CONFIG['base_url']
+                }
+            }), 500
+            
+    except Exception as e:
+        print(f"Error testing connection: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'config': {
+                'app_owner': ZOHO_CONFIG['app_owner_name'],
+                'app_name': ZOHO_CONFIG['app_name'],
+                'base_url': ZOHO_CONFIG['base_url']
+            }
+        }), 500
