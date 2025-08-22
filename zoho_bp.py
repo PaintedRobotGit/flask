@@ -10,7 +10,7 @@ zoho_bp = Blueprint('zoho', __name__, url_prefix='/api/zoho')
 ZOHO_CONFIG = {
     'client_id': '1000.NHPZ1CTLITJBBNG4WQCL1OC8GOEFIG',
     'client_secret': '07dcee8c0291f26b1ae6ed6c6ee040a02e530fecc2',
-    'refresh_token': '1000.2e9f82d7cd4485477685fc15398d0637.0f5e7a7f227a9a5a121fc0a626f7a272',
+    'refresh_token': '1000.54f436cfb468e679e91b32250171be9b.650fd44864e7ba0912eedece1bb8df2f',
     'app_owner_name': 'precisionfleetgear',  # Updated to match your config
     'app_name': 'precision-ops',
     'base_url': 'https://creator.zoho.com'

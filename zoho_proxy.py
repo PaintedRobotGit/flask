@@ -10,7 +10,7 @@ app = Flask(__name__)
 ZOHO_CONFIG = {
     'client_id': '1000.NHPZ1CTLITJBBNG4WQCL1OC8GOEFIG',
     'client_secret': '07dcee8c0291f26b1ae6ed6c6ee040a02e530fecc2',
-    'refresh_token': '1000.2e9f82d7cd4485477685fc15398d0637.0f5e7a7f227a9a5a121fc0a626f7a272',  # Replace with your actual refresh token
+    'refresh_token': '1000.54f436cfb468e679e91b32250171be9b.650fd44864e7ba0912eedece1bb8df2f',  # Replace with your actual refresh token
     'app_owner_name': 'creator',  # Replace with your app owner name
     'app_name': 'precision-ops',  # Replace with your app name
     'base_url': 'https://creator.zoho.com'
