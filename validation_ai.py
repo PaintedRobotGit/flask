@@ -103,18 +103,17 @@ def validate_ai_payload():
                 "gemini_response": vendor_response,
             }), 502
 
-        # Initialize ecommerce-specific fields to null/empty (will be populated by ecommerce call if applicable)
-        parsed["catalogue_size"] = None
-        parsed["product_categories_count"] = None
-        parsed["ecommerce_platform"] = None
-        parsed["shipping_methods"] = []
-        parsed["payment_methods"] = []
-        parsed["has_mobile_app"] = None
-        parsed["has_subscription_model"] = None
-        parsed["international_shipping"] = None
-
         # Conditional ecommerce-specific call
         if customer_type == "ecommerce":
+            # Initialize ecommerce-specific fields to null/empty (will be populated by ecommerce call)
+            parsed["catalogue_size"] = None
+            parsed["product_categories_count"] = None
+            parsed["ecommerce_platform"] = None
+            parsed["shipping_methods"] = []
+            parsed["payment_methods"] = []
+            parsed["has_mobile_app"] = None
+            parsed["has_subscription_model"] = None
+            parsed["international_shipping"] = None
             vendor_response_ecom = None
             try:
                 system_instruction_text_ecom, user_prompt_text_ecom = _build_ad_agency_prompts_ecommerce(user_data)
@@ -211,18 +210,17 @@ def validate_ai_payload():
             )
             parsed = _parse_strict_json_object(completion_text)
             
-            # Initialize ecommerce-specific fields to null/empty (will be populated by ecommerce call if applicable)
-            parsed["catalogue_size"] = None
-            parsed["product_categories_count"] = None
-            parsed["ecommerce_platform"] = None
-            parsed["shipping_methods"] = []
-            parsed["payment_methods"] = []
-            parsed["has_mobile_app"] = None
-            parsed["has_subscription_model"] = None
-            parsed["international_shipping"] = None
-            
             # Conditional ecommerce-specific call
             if customer_type_value == "ecommerce":
+                # Initialize ecommerce-specific fields to null/empty (will be populated by ecommerce call)
+                parsed["catalogue_size"] = None
+                parsed["product_categories_count"] = None
+                parsed["ecommerce_platform"] = None
+                parsed["shipping_methods"] = []
+                parsed["payment_methods"] = []
+                parsed["has_mobile_app"] = None
+                parsed["has_subscription_model"] = None
+                parsed["international_shipping"] = None
                 try:
                     system_instruction_text_ecom, user_prompt_text_ecom = _build_ad_agency_prompts_ecommerce(payload_data)
                     completion_text_ecom, vendor_response_ecom = _call_gemini_generate_content(
