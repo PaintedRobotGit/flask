@@ -58,19 +58,37 @@ def daily_brief():
         callback: str
     ) -> None:
         try:
-            # Call Anthropic API
-            completion_text = _call_anthropic_api(
+            # Step 1: Generate structured JSON summary (without HTML)
+            summary_completion = _call_anthropic_summary(
                 api_key=anthropic_key,
                 payload_data=transformed_data
             )
             
-            # Parse the response
-            parsed = _parse_strict_json_object(completion_text)
+            # Parse the summary response
+            summary_parsed = _parse_strict_json_object(summary_completion)
+            
+            # Step 2: Generate HTML daily brief using the summary
+            html_completion = _call_anthropic_html(
+                api_key=anthropic_key,
+                summary_data=summary_parsed,
+                original_data=transformed_data
+            )
+            
+            # Parse HTML response (it should be a JSON object with html_daily_brief field)
+            html_parsed = _parse_strict_json_object(html_completion)
+            
+            # Combine: merge HTML into summary
+            final_output = summary_parsed.copy()
+            if "html_daily_brief" in html_parsed:
+                final_output["html_daily_brief"] = html_parsed["html_daily_brief"]
+            else:
+                # Fallback if HTML parsing didn't work as expected
+                final_output["html_daily_brief"] = ""
             
             result_body: Dict[str, Any] = {
                 "status": "ok",
                 "date": transformed_data.get("date"),
-                "output": parsed
+                "output": final_output
             }
             
         except requests.HTTPError as http_err:
@@ -179,12 +197,12 @@ def _transform_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     return transformed
 
 
-def _call_anthropic_api(*, api_key: str, payload_data: Dict[str, Any]) -> str:
-    """Call Anthropic's Messages API and return the text output."""
+def _call_anthropic_summary(*, api_key: str, payload_data: Dict[str, Any]) -> str:
+    """Call Anthropic API to generate structured JSON summary (without HTML)."""
     if not api_key:
         raise requests.RequestException("Missing Anthropic API key")
     
-    # Build instructions
+    # Build instructions for structured summary
     instructions = (
         "You are a project management assistant for PaintedRobot.\n"
         "Your job is to read a structured JSON payload describing today's time blocks, projects, priorities, and tasks for all users, and then produce a summarized JSON object.\n\n"
@@ -229,8 +247,7 @@ def _call_anthropic_api(*, api_key: str, payload_data: Dict[str, Any]) -> str:
         "    \"priority_definition_issues\": [ { \"name\": string, \"project\": string, \"level\": string, \"status\": string } ],\n"
         "    \"other_observations\": [string, ...]\n"
         "  },\n"
-        "  \"questions\": [string, ...],\n"
-        "  \"html_daily_brief\": string\n"
+        "  \"questions\": [string, ...]\n"
         "}\n\n"
         "DETAILED GUIDANCE:\n"
         "- Be descriptive and insightful — help the team understand what matters today.\n"
@@ -253,19 +270,11 @@ def _call_anthropic_api(*, api_key: str, payload_data: Dict[str, Any]) -> str:
         "- Include ONLY if real uncertainties exist in the input.\n"
         "- Ask concise questions to resolve missing details (scheduled hours with no tasks, priorities lacking tasks, etc.).\n"
         "- If everything is sufficiently clear, OMIT the questions field entirely.\n\n"
-        "HTML_DAILY_BRIEF:\n"
-        "- Must be concise and readable in a team chat.\n"
-        "- Use ONLY: h2, h3, p, ul, li, strong, em, br.\n"
-        "- Structure:\n"
-        "  1) Projects We Are Working On Today — short list with type of work & hours\n"
-        "  2) Main Priorities — 3–7 bullets\n"
-        "  3) User Breakdown — a few short, compact sentences per user\n"
-        "- Do not overload with long bullet lists.\n"
-        "- Keep focus on what the TEAM is doing today.\n\n"
         "OUTPUT FORMAT RULES:\n"
         "- Output MUST be valid JSON.\n"
         "- Do NOT wrap it in markdown or add explanations.\n"
-        "- Use double quotes for all keys and values.\n\n"
+        "- Use double quotes for all keys and values.\n"
+        "- Do NOT include html_daily_brief in your output - that will be generated separately.\n\n"
         "Below is today's INPUT_DATA_JSON:"
     )
     
@@ -290,6 +299,104 @@ def _call_anthropic_api(*, api_key: str, payload_data: Dict[str, Any]) -> str:
     request_body = {
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 10000,
+        "temperature": 0.3,
+        "messages": messages
+    }
+    
+    # Headers
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01"
+    }
+    
+    # Make API call
+    response = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers=headers,
+        json=request_body,
+        timeout=(60, 300)  # (connect timeout, read timeout)
+    )
+    response.raise_for_status()
+    
+    data = response.json()
+    
+    # Extract text from response
+    text_output = ""
+    content = data.get("content", [])
+    for item in content:
+        if item.get("type") == "text":
+            text_output += item.get("text", "")
+    
+    if not text_output:
+        raise requests.RequestException("Anthropic API returned empty content")
+    
+    return text_output
+
+
+def _call_anthropic_html(*, api_key: str, summary_data: Dict[str, Any], original_data: Dict[str, Any]) -> str:
+    """Call Anthropic API to generate HTML daily brief from the summary."""
+    if not api_key:
+        raise requests.RequestException("Missing Anthropic API key")
+    
+    # Build instructions for HTML generation
+    instructions = (
+        "You are a project management assistant for PaintedRobot.\n"
+        "Your job is to convert a daily brief summary into a concise, readable HTML format for team chat.\n\n"
+        "You will receive:\n"
+        "1. A structured JSON summary of today's daily brief (already generated)\n"
+        "2. The original raw data (for reference if needed)\n\n"
+        "YOUR TASK:\n"
+        "Generate a single JSON object with this structure:\n"
+        "{\n"
+        "  \"html_daily_brief\": string\n"
+        "}\n\n"
+        "HTML REQUIREMENTS:\n"
+        "- Must be concise and readable in a team chat.\n"
+        "- Use ONLY these HTML tags: h2, h3, p, ul, li, strong, em, br.\n"
+        "- Do NOT use div, span, or other container tags.\n"
+        "- Structure should be:\n"
+        "  1) Projects We Are Working On Today — short list with type of work & hours\n"
+        "  2) Main Priorities — 3–7 bullets\n"
+        "  3) User Breakdown — a few short, compact sentences per user\n"
+        "- Do not overload with long bullet lists.\n"
+        "- Keep focus on what the TEAM is doing today.\n"
+        "- Be conversational and actionable.\n"
+        "- Highlight urgent items and key focus areas.\n"
+        "- Convert days_overdue into whole days (e.g. \"overdue by 3 days\"). NEVER mention milliseconds.\n\n"
+        "OUTPUT FORMAT RULES:\n"
+        "- Output MUST be valid JSON with only the html_daily_brief field.\n"
+        "- Do NOT wrap it in markdown or add explanations.\n"
+        "- Use double quotes for all keys and values.\n"
+        "- Escape HTML properly within the JSON string.\n\n"
+        "Below is the SUMMARY_JSON (use this as your primary source):"
+    )
+    
+    # Build messages
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": instructions
+                },
+                {
+                    "type": "text",
+                    "text": f"SUMMARY_JSON:\n{json.dumps(summary_data, ensure_ascii=False, indent=2)}"
+                },
+                {
+                    "type": "text",
+                    "text": f"\n\nORIGINAL_DATA_JSON (for reference only):\n{json.dumps(original_data, ensure_ascii=False, indent=2)}"
+                }
+            ]
+        }
+    ]
+    
+    # Build request payload
+    request_body = {
+        "model": "claude-sonnet-4-20250514",
+        "max_tokens": 4000,  # Less tokens needed for HTML generation
         "temperature": 0.3,
         "messages": messages
     }
