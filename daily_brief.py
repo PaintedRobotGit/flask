@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 import json
 import threading
 import os
+import time
 
 
 daily_brief_bp = Blueprint("daily_brief", __name__)
@@ -379,16 +380,73 @@ def _call_anthropic_summary(*, api_key: str, payload_data: Dict[str, Any]) -> st
         "anthropic-version": "2023-06-01"
     }
     
-    # Make API call
-    response = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers=headers,
-        json=request_body,
-        timeout=(60, 300)  # (connect timeout, read timeout)
-    )
-    response.raise_for_status()
+    # Make API call with retry logic for rate limiting and server errors
+    max_attempts = 3
+    attempt = 0
+    last_exc: Optional[Exception] = None
+    data = None
     
-    data = response.json()
+    while attempt < max_attempts:
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=request_body,
+                timeout=(60, 300)  # (connect timeout, read timeout)
+            )
+            
+            # Handle rate limiting (429) and server errors (5xx) with retries
+            if response.status_code == 429:
+                attempt += 1
+                if attempt >= max_attempts:
+                    response.raise_for_status()
+                # Check for Retry-After header, otherwise use exponential backoff
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        wait_time = int(retry_after)
+                    except ValueError:
+                        wait_time = 2 ** attempt
+                else:
+                    # Exponential backoff: 2s, 4s, 8s
+                    wait_time = 2 ** attempt
+                time.sleep(wait_time)
+                continue
+            elif 500 <= response.status_code < 600:
+                attempt += 1
+                if attempt >= max_attempts:
+                    response.raise_for_status()
+                # Exponential backoff for server errors
+                wait_time = 2 ** attempt
+                time.sleep(wait_time)
+                continue
+            
+            response.raise_for_status()
+            data = response.json()
+            break
+            
+        except requests.HTTPError as http_err:
+            # If it's a 429 or 5xx that we haven't retried enough, continue
+            if http_err.response is not None:
+                status_code = http_err.response.status_code
+                if (status_code == 429 or (500 <= status_code < 600)) and attempt < max_attempts - 1:
+                    attempt += 1
+                    wait_time = 2 ** attempt
+                    time.sleep(wait_time)
+                    continue
+            # Otherwise, re-raise
+            raise
+        except requests.RequestException as req_err:
+            last_exc = req_err
+            attempt += 1
+            if attempt >= max_attempts:
+                raise
+            # Exponential backoff for other request errors
+            wait_time = 2 ** attempt
+            time.sleep(wait_time)
+    
+    if data is None:
+        raise requests.RequestException("Failed to get response from Anthropic API after retries")
     
     # Extract text from response
     text_output = ""
@@ -489,16 +547,73 @@ def _call_anthropic_html(*, api_key: str, summary_data: Dict[str, Any], original
         "anthropic-version": "2023-06-01"
     }
     
-    # Make API call
-    response = requests.post(
-        "https://api.anthropic.com/v1/messages",
-        headers=headers,
-        json=request_body,
-        timeout=(60, 300)  # (connect timeout, read timeout)
-    )
-    response.raise_for_status()
+    # Make API call with retry logic for rate limiting and server errors
+    max_attempts = 3
+    attempt = 0
+    last_exc: Optional[Exception] = None
+    data = None
     
-    data = response.json()
+    while attempt < max_attempts:
+        try:
+            response = requests.post(
+                "https://api.anthropic.com/v1/messages",
+                headers=headers,
+                json=request_body,
+                timeout=(60, 300)  # (connect timeout, read timeout)
+            )
+            
+            # Handle rate limiting (429) and server errors (5xx) with retries
+            if response.status_code == 429:
+                attempt += 1
+                if attempt >= max_attempts:
+                    response.raise_for_status()
+                # Check for Retry-After header, otherwise use exponential backoff
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        wait_time = int(retry_after)
+                    except ValueError:
+                        wait_time = 2 ** attempt
+                else:
+                    # Exponential backoff: 2s, 4s, 8s
+                    wait_time = 2 ** attempt
+                time.sleep(wait_time)
+                continue
+            elif 500 <= response.status_code < 600:
+                attempt += 1
+                if attempt >= max_attempts:
+                    response.raise_for_status()
+                # Exponential backoff for server errors
+                wait_time = 2 ** attempt
+                time.sleep(wait_time)
+                continue
+            
+            response.raise_for_status()
+            data = response.json()
+            break
+            
+        except requests.HTTPError as http_err:
+            # If it's a 429 or 5xx that we haven't retried enough, continue
+            if http_err.response is not None:
+                status_code = http_err.response.status_code
+                if (status_code == 429 or (500 <= status_code < 600)) and attempt < max_attempts - 1:
+                    attempt += 1
+                    wait_time = 2 ** attempt
+                    time.sleep(wait_time)
+                    continue
+            # Otherwise, re-raise
+            raise
+        except requests.RequestException as req_err:
+            last_exc = req_err
+            attempt += 1
+            if attempt >= max_attempts:
+                raise
+            # Exponential backoff for other request errors
+            wait_time = 2 ** attempt
+            time.sleep(wait_time)
+    
+    if data is None:
+        raise requests.RequestException("Failed to get response from Anthropic API after retries")
     
     # Extract text from response
     text_output = ""
