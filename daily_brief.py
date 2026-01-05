@@ -89,7 +89,8 @@ def daily_brief():
             result_body: Dict[str, Any] = {
                 "status": "ok",
                 "date": transformed_data.get("date"),
-                "output": final_output
+                "output": final_output,
+                "output_json": json.dumps(final_output, ensure_ascii=False)
             }
             
         except requests.HTTPError as http_err:
