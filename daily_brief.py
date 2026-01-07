@@ -524,7 +524,7 @@ def _call_anthropic_html(*, api_key: str, summary_data: Dict[str, Any], original
         "{\n"
         "  \"cliq_message\": {\n"
         "    \"text\": string,\n"
-        "    \"card\": {\"title\": string, \"theme\": \"modern-inline\", \"thumbnail\": string},\n"
+        "    \"card\": {\"title\": string, \"theme\": \"modern-inline\", \"thumbnail\": \"https://flask-production-aff4.up.railway.app/static/cliq/brief-logo.png\"},\n"
         "    \"slides\": [\n"
         "      {\"type\": \"list\", \"title\": \"Projects Today\", \"data\": [string, ...], \"styles\": {\"type\": \"disc\"}},\n"
         "      {\"type\": \"list\", \"title\": \"Main Priorities\", \"data\": [string, ...], \"styles\": {\"type\": \"disc\"}},\n"
