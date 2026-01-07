@@ -80,11 +80,11 @@ def daily_brief():
             
             # Combine: merge HTML into summary
             final_output = summary_parsed.copy()
-            if "html_daily_brief" in html_parsed:
-                final_output["html_daily_brief"] = html_parsed["html_daily_brief"]
-            else:
-                # Fallback if HTML parsing didn't work as expected
-                final_output["html_daily_brief"] = ""
+            # keep legacy field if present
+            final_output["html_daily_brief"] = html_parsed.get("html_daily_brief", "")
+
+            # new field for Cliq card payload
+            final_output["cliq_message"] = html_parsed.get("cliq_message", {})
             
             result_body: Dict[str, Any] = {
                 "status": "ok",
