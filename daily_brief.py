@@ -157,43 +157,12 @@ def daily_brief():
     )
     worker.start()
     
-    # ============================================================================
-    # TEMPORARY DEBUGGING CODE - DELETE THIS SECTION AFTER DEBUGGING
-    # ============================================================================
-    # Fetch available models from Anthropic API to help debug model name issues
-    available_models = None
-    models_error = None
-    try:
-        models_response = requests.get(
-            "https://api.anthropic.com/v1/models",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01"
-            },
-            timeout=(10, 30)
-        )
-        models_response.raise_for_status()
-        available_models = models_response.json()
-    except Exception as e:
-        models_error = str(e)
-    # ============================================================================
-    # END TEMPORARY DEBUGGING CODE - DELETE THE ABOVE SECTION AFTER DEBUGGING
-    # ============================================================================
-    
     # Return immediate response to Zoho
-    response_data = {
+    return jsonify({
         "status": "accepted",
         "message": "Daily brief processing started",
         "date": date,
-    }
-    
-    # Include models response in immediate response (TEMPORARY - DELETE AFTER DEBUGGING)
-    if available_models is not None:
-        response_data["debug_available_models"] = available_models
-    if models_error is not None:
-        response_data["debug_models_error"] = models_error
-    
-    return jsonify(response_data), 202
+    }), 202
 
 
 def _transform_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
