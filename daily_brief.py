@@ -94,12 +94,25 @@ def daily_brief():
             }
             
         except requests.HTTPError as http_err:
+            # Extract detailed error information from response
+            error_details = str(http_err)
+            error_response_text = None
+            error_response_json = None
+            
+            if http_err.response is not None:
+                error_response_text = http_err.response.text
+                try:
+                    error_response_json = http_err.response.json()
+                except Exception:
+                    pass
+            
             result_body = {
                 "status": "error",
                 "date": transformed_data.get("date"),
                 "message": "Anthropic API HTTP error",
-                "details": str(http_err),
-                "response": getattr(http_err, "response", None).text if getattr(http_err, "response", None) else None,
+                "details": error_details,
+                "response": error_response_json if error_response_json else error_response_text,
+                "status_code": http_err.response.status_code if http_err.response else None,
             }
         except requests.RequestException as req_err:
             result_body = {
@@ -144,12 +157,43 @@ def daily_brief():
     )
     worker.start()
     
+    # ============================================================================
+    # TEMPORARY DEBUGGING CODE - DELETE THIS SECTION AFTER DEBUGGING
+    # ============================================================================
+    # Fetch available models from Anthropic API to help debug model name issues
+    available_models = None
+    models_error = None
+    try:
+        models_response = requests.get(
+            "https://api.anthropic.com/v1/models",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01"
+            },
+            timeout=(10, 30)
+        )
+        models_response.raise_for_status()
+        available_models = models_response.json()
+    except Exception as e:
+        models_error = str(e)
+    # ============================================================================
+    # END TEMPORARY DEBUGGING CODE - DELETE THE ABOVE SECTION AFTER DEBUGGING
+    # ============================================================================
+    
     # Return immediate response to Zoho
-    return jsonify({
+    response_data = {
         "status": "accepted",
         "message": "Daily brief processing started",
         "date": date,
-    }), 202
+    }
+    
+    # Include models response in immediate response (TEMPORARY - DELETE AFTER DEBUGGING)
+    if available_models is not None:
+        response_data["debug_available_models"] = available_models
+    if models_error is not None:
+        response_data["debug_models_error"] = models_error
+    
+    return jsonify(response_data), 202
 
 
 def _transform_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -373,6 +417,8 @@ def _call_anthropic_summary(*, api_key: str, payload_data: Dict[str, Any]) -> st
     ]
     
     # Build request payload
+    # Note: If you get 400 errors, verify the model name is still valid for your account
+    # Common model names: "claude-sonnet-4-20250514", "claude-3-5-sonnet-20241022", "claude-opus-4-20250514"
     request_body = {
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 10000,
@@ -380,7 +426,7 @@ def _call_anthropic_summary(*, api_key: str, payload_data: Dict[str, Any]) -> st
         "messages": messages
     }
     
-    # Headers
+    # Headers - anthropic-version must be included and match API spec
     headers = {
         "Content-Type": "application/json",
         "x-api-key": api_key,
@@ -427,6 +473,15 @@ def _call_anthropic_summary(*, api_key: str, payload_data: Dict[str, Any]) -> st
                 wait_time = 2 ** attempt
                 time.sleep(wait_time)
                 continue
+            elif response.status_code == 400:
+                # For 400 errors, capture the detailed error message before raising
+                error_detail = None
+                try:
+                    error_detail = response.json()
+                except Exception:
+                    error_detail = {"text": response.text}
+                error_msg = f"Anthropic API 400 Bad Request: {error_detail}"
+                raise requests.HTTPError(error_msg, response=response)
             
             response.raise_for_status()
             data = response.json()
@@ -629,6 +684,15 @@ def _call_anthropic_html(*, api_key: str, summary_data: Dict[str, Any], original
                 wait_time = 2 ** attempt
                 time.sleep(wait_time)
                 continue
+            elif response.status_code == 400:
+                # For 400 errors, capture the detailed error message before raising
+                error_detail = None
+                try:
+                    error_detail = response.json()
+                except Exception:
+                    error_detail = {"text": response.text}
+                error_msg = f"Anthropic API 400 Bad Request: {error_detail}"
+                raise requests.HTTPError(error_msg, response=response)
             
             response.raise_for_status()
             data = response.json()
