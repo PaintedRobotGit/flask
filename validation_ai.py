@@ -103,14 +103,44 @@ def validate_ai_payload():
                 "gemini_response": vendor_response,
             }), 502
 
+        # Website tech call (third call) – four booleans: Google Ads, Meta Ads, LinkedIn Ads, Tag Manager
+        parsed["google_ads"] = False
+        parsed["meta_ads"] = False
+        parsed["linkedin_ads"] = False
+        parsed["tag_manager"] = False
+        website_url = _get_website_url_for_calls(parsed, user_data)
+        if website_url:
+            try:
+                system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url)
+                completion_tech, _ = _call_gemini_generate_content(
+                    api_key=gemini_key,
+                    model=model,
+                    prompt=user_prompt_tech,
+                    system_instruction=system_instruction_tech,
+                    read_timeout_seconds=read_timeout_seconds,
+                    connect_timeout_seconds=connect_timeout_seconds,
+                )
+                if completion_tech and completion_tech.strip():
+                    parsed_tech = _parse_strict_json_object(completion_tech)
+                    parsed["google_ads"] = bool(parsed_tech.get("google_ads"))
+                    parsed["meta_ads"] = bool(parsed_tech.get("meta_ads"))
+                    parsed["linkedin_ads"] = bool(parsed_tech.get("linkedin_ads"))
+                    parsed["tag_manager"] = bool(parsed_tech.get("tag_manager"))
+            except (requests.HTTPError, requests.RequestException, ValueError):
+                pass  # keep defaults false
+
         # Conditional ecommerce-specific call
         if customer_type == "ecommerce":
             # Initialize ecommerce-specific fields to null/empty (will be populated by ecommerce call)
             parsed["catalogue_size"] = None
             parsed["product_categories_count"] = None
+            parsed["categories_count"] = None
             parsed["ecommerce_platform"] = None
+            parsed["website_platform"] = None
             parsed["shipping_methods"] = []
             parsed["payment_methods"] = []
+            parsed["payment_methods_str"] = ""
+            parsed["shipping_methods_str"] = ""
             parsed["has_mobile_app"] = None
             parsed["has_subscription_model"] = None
             parsed["international_shipping"] = None
@@ -140,6 +170,7 @@ def validate_ai_payload():
                     parsed_ecom = _parse_strict_json_object(completion_text_ecom)
                     # Merge ecommerce-specific fields into primary result
                     parsed.update(parsed_ecom)
+                    _normalize_ecommerce_output(parsed)
             except requests.HTTPError as http_err:
                 # Log error but don't fail - primary data is still valid
                 parsed["catalogue_size"] = None
@@ -209,15 +240,45 @@ def validate_ai_payload():
                 connect_timeout_seconds=ct_seconds,
             )
             parsed = _parse_strict_json_object(completion_text)
-            
+
+            # Website tech call (third call) – four booleans: Google Ads, Meta Ads, LinkedIn Ads, Tag Manager
+            parsed["google_ads"] = False
+            parsed["meta_ads"] = False
+            parsed["linkedin_ads"] = False
+            parsed["tag_manager"] = False
+            website_url = _get_website_url_for_calls(parsed, payload_data)
+            if website_url:
+                try:
+                    system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url)
+                    completion_tech, _ = _call_gemini_generate_content(
+                        api_key=gemini_api_key,
+                        model=model_name,
+                        prompt=user_prompt_tech,
+                        system_instruction=system_instruction_tech,
+                        read_timeout_seconds=rt_seconds,
+                        connect_timeout_seconds=ct_seconds,
+                    )
+                    if completion_tech and completion_tech.strip():
+                        parsed_tech = _parse_strict_json_object(completion_tech)
+                        parsed["google_ads"] = bool(parsed_tech.get("google_ads"))
+                        parsed["meta_ads"] = bool(parsed_tech.get("meta_ads"))
+                        parsed["linkedin_ads"] = bool(parsed_tech.get("linkedin_ads"))
+                        parsed["tag_manager"] = bool(parsed_tech.get("tag_manager"))
+                except (requests.HTTPError, requests.RequestException, ValueError):
+                    pass  # keep defaults false
+
             # Conditional ecommerce-specific call
             if customer_type_value == "ecommerce":
                 # Initialize ecommerce-specific fields to null/empty (will be populated by ecommerce call)
                 parsed["catalogue_size"] = None
                 parsed["product_categories_count"] = None
+                parsed["categories_count"] = None
                 parsed["ecommerce_platform"] = None
+                parsed["website_platform"] = None
                 parsed["shipping_methods"] = []
                 parsed["payment_methods"] = []
+                parsed["payment_methods_str"] = ""
+                parsed["shipping_methods_str"] = ""
                 parsed["has_mobile_app"] = None
                 parsed["has_subscription_model"] = None
                 parsed["international_shipping"] = None
@@ -234,6 +295,7 @@ def validate_ai_payload():
                     parsed_ecom = _parse_strict_json_object(completion_text_ecom)
                     # Merge ecommerce-specific fields into primary result
                     parsed.update(parsed_ecom)
+                    _normalize_ecommerce_output(parsed)
                 except (requests.HTTPError, requests.RequestException, ValueError):
                     # Log error but don't fail - primary data is still valid
                     # Set catalogue_size to null as fallback
@@ -381,6 +443,60 @@ def _call_gemini_generate_content(*, api_key: str, model: str, prompt: str, syst
     return text_output, data
 
 
+def _get_website_url_for_calls(parsed_primary: Dict[str, Any], user_data: Any) -> Optional[str]:
+    """Extract a single website URL from primary call result or user_data for use in website-tech and ecommerce calls."""
+    domains = parsed_primary.get("known_domains") or []
+    if domains and isinstance(domains[0], str) and domains[0].strip():
+        d = domains[0].strip()
+        if not d.startswith("http"):
+            d = "https://" + d
+        return d
+    if isinstance(user_data, dict):
+        for key in ("website", "domain", "url", "website_url", "domain_url"):
+            v = user_data.get(key)
+            if v and isinstance(v, str) and v.strip():
+                v = v.strip()
+                if not v.startswith("http"):
+                    v = "https://" + v
+                return v
+    return None
+
+
+def _build_ad_agency_prompts_website_tech(website_url: str) -> Tuple[str, str]:
+    """Build system instruction and user prompt for website technology detection (four booleans only).
+
+    Returns (system_instruction_text, user_prompt_text).
+    Output schema: google_ads, meta_ads, linkedin_ads, tag_manager (all boolean).
+    """
+    system_text = (
+        "You are a technical analyst. Your only job is to determine whether a given website uses specific "
+        "advertising and tag-management technologies by inspecting the live site. Use Google Search to visit "
+        "the URL and inspect page source, script tags, and network indicators. Return only true if you find "
+        "definitive evidence (e.g. script src, config objects). Return false if you do not find evidence. "
+        "Do not guess or infer from company type or industry. Accuracy is critical."
+    )
+    user_text = (
+        "Visit this website URL and inspect the page source (HTML, script tags, and any visible tracking code). "
+        "For each of the four technologies below, set the value to true ONLY if you find definitive evidence "
+        "that the technology is present on the site. Set to false otherwise. Do not guess.\n\n"
+        "**URL to inspect:** " + website_url + "\n\n"
+        "**Technologies to detect:**\n"
+        "1. **Google Ads** – Look for: gtag with aw-*, googletagmanager.com/gtag with Google Ads, doubleclick, or googleadservices.com scripts.\n"
+        "2. **Meta Ads (Facebook/Instagram)** – Look for: fbq(, fbevents.js, facebook.net/en_US/fbevents, Meta Pixel.\n"
+        "3. **LinkedIn Ads** – Look for: LinkedIn Insight Tag, li.lms-analytics, lintracker, linkedin.com/li.lms-analytics.\n"
+        "4. **Tag Manager (Google Tag Manager)** – Look for: googletagmanager.com/gtm.js, GTM-XXXXX container ID, dataLayer.\n\n"
+        "Return a single JSON object with exactly these four boolean fields:\n"
+        "{\n"
+        "  \"google_ads\": boolean,\n"
+        "  \"meta_ads\": boolean,\n"
+        "  \"linkedin_ads\": boolean,\n"
+        "  \"tag_manager\": boolean\n"
+        "}\n\n"
+        "Output only the JSON object, with no prose or explanation outside of it."
+    )
+    return system_text, user_text
+
+
 def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
     """Build system instruction and user prompt for primary/common fields (all customer types).
 
@@ -428,7 +544,6 @@ def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
         "   - **GitHub**: Search for `site:github.com \"[Company Name]\"` and return the URL of the official organization or profile.\n"
         "3. **Gather other key information.** Use a series of broad and specific searches to fill out the remaining fields:\n"
         "   - **Industry**: Search for '[company name] industry' or '[company name] sector'. Use official company descriptions, LinkedIn, or industry classifications.\n"
-        "   - **Key Personnel**: Search for '[company name] leadership team', '[company name] executives', '[company name] management team'. Look on company website 'About' or 'Leadership' pages, LinkedIn company page, or press releases. Only include executives/C-suite and senior VPs.\n"
         "   - **Competitors**: Search for '[company name] competitors' or '[company name] vs competitors'. Look for industry reports, analyst comparisons, or company mentions of competitors. Only include direct competitors in the same market segment.\n"
         "   - **Annual Revenue**: Search for '[company name] revenue', '[company name] annual report', '[company name] financials'. Prioritize official SEC filings, annual reports, or verified financial databases.\n"
         "   - **Size (Employees)**: Search for '[company name] employees', '[company name] workforce size', '[company name] company size'. Check LinkedIn company page, company website, or industry databases.\n"
@@ -455,7 +570,6 @@ def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
         "  \"size_employees\": number | null,\n"
         "  \"annual_revenue\": number | null,\n"
         "  \"locations\": string[],\n"
-        "  \"key_personnel\": [{ \"name\": string, \"title\": string | null, \"linkedin_profile\": string | null, \"email\": string | null, \"phone\": string | null }],\n"
         "  \"products_services\": string[],  // Products (for ecommerce) or services (for service companies) offered by the company\n"
         "  \"value_proposition\": string | null,  // The company's value proposition TO THEIR CUSTOMERS (what they offer/sell)\n"
         "  \"marketing_insights\": {\n"
@@ -476,7 +590,6 @@ def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
         "- **ACCURACY:** Do not invent, fabricate, or guess any information. If you cannot find reliable, verifiable information, use `null` for single fields or empty arrays `[]` for list fields.\n"
         "- **SOURCES:** The `sources` array must contain ONLY actual URLs that you accessed during your research. Do not include URLs you did not visit. Each source should be a distinct URL that substantiates the data you found.\n"
         "- **CONFIDENCE:** Set `confidence` to reflect how much of the data was found from authoritative sources vs inferred. Use 0.9+ only if most data came from official sources (company website, SEC filings, LinkedIn). Use 0.7-0.8 if some data was inferred or from secondary sources. Use 0.5-0.6 if significant data is missing or uncertain.\n"
-        "- **KEY PERSONNEL:** Only include C-suite executives (CEO, CFO, COO, CTO, etc.) and Senior Vice Presidents. Do not include mid-level managers or department heads unless they are publicly prominent.\n"
         "- **COMPETITORS:** Only include direct competitors in the same market segment. Do not include suppliers, customers, or companies in adjacent markets.\n"
         "- **ANNUAL REVENUE:** Only include if found in official sources (SEC filings, annual reports, verified financial databases). If only estimates are available, use `null`.\n"
         "- Do not invent URLs, emails, or names.\n"
@@ -564,23 +677,25 @@ def _build_ad_agency_prompts_ecommerce(user_data: Any) -> Tuple[str, str]:
         "   - Search for '[company name] ecommerce platform' or '[company name] shopping cart software' in news/articles\n"
         "   - Check job postings that explicitly mention the platform\n"
         "   **If you cannot find definitive evidence after thorough searching, return `null`. Do NOT guess or infer based on website appearance, design patterns, or payment methods alone.**\n\n"
-        "**4. Shipping Methods (shipping_methods):**\n"
+        "**4. Website Platform (website_platform):**\n"
+        "   - The general CMS or site builder the website is built on, if identifiable (e.g. WordPress, Wix, Squarespace, custom). This is distinct from ecommerce_platform (the shopping cart). Check page source, footer, or meta generator tags.\n\n"
+        "**5. Shipping Methods (shipping_methods):**\n"
         "   - Check the company's website shipping/FAQ page\n"
         "   - Look for shipping options during checkout (if accessible)\n"
         "   - Search for '[company name] shipping options' or '[company name] delivery methods'\n\n"
-        "**5. Payment Methods (payment_methods):**\n"
+        "**6. Payment Methods (payment_methods):**\n"
         "   - Check the company's website checkout page or payment information\n"
         "   - Look for payment logos/icons (Visa, Mastercard, PayPal, Apple Pay, etc.)\n"
         "   - Search for '[company name] payment methods' or '[company name] accepted payments'\n\n"
-        "**6. Mobile App (has_mobile_app):**\n"
+        "**7. Mobile App (has_mobile_app):**\n"
         "   - Search for '[company name] mobile app' or '[company name] iOS app' or '[company name] Android app'\n"
         "   - Check App Store or Google Play Store listings\n"
         "   - Look for app download links on the company website\n\n"
-        "**7. Subscription Model (has_subscription_model):**\n"
+        "**8. Subscription Model (has_subscription_model):**\n"
         "   - Look for subscription options on the website\n"
         "   - Search for '[company name] subscription' or '[company name] recurring orders'\n"
         "   - Check if they offer subscription boxes, recurring deliveries, or membership programs\n\n"
-        "**8. International Shipping (international_shipping):**\n"
+        "**9. International Shipping (international_shipping):**\n"
         "   - Check shipping information on the website\n"
         "   - Look for country selection or international shipping options\n"
         "   - Search for '[company name] international shipping' or '[company name] ships to'\n\n"
@@ -592,14 +707,15 @@ def _build_ad_agency_prompts_ecommerce(user_data: Any) -> Tuple[str, str]:
         "All of these are valid measures of catalog size.\n\n"
         "Return a single JSON object with the following schema:\n"
         "{\n"
-        "  \"catalogue_size\": number | null,  // The approximate number of products/SKUs in the company's catalog\n"
-        "  \"product_categories_count\": number | null,  // The number of distinct product categories/departments\n"
-        "  \"ecommerce_platform\": string | null,  // The ecommerce platform used (e.g., 'Shopify', 'Magento', 'WooCommerce', 'BigCommerce', 'Salesforce Commerce Cloud', 'custom-built', etc.)\n"
-        "  \"shipping_methods\": string[],  // Available shipping options (e.g., ['Standard Shipping', 'Express Shipping', 'Overnight', 'International'])\n"
-        "  \"payment_methods\": string[],  // Accepted payment methods (e.g., ['Credit Cards', 'PayPal', 'Apple Pay', 'Google Pay', 'Buy Now Pay Later'])\n"
-        "  \"has_mobile_app\": boolean | null,  // Whether the company has a mobile app (iOS, Android, or both)\n"
-        "  \"has_subscription_model\": boolean | null,  // Whether the company offers subscriptions, recurring orders, or membership programs\n"
-        "  \"international_shipping\": boolean | null  // Whether the company ships internationally\n"
+        "  \"catalogue_size\": number | null,  // The approximate number of products/SKUs (integer)\n"
+        "  \"product_categories_count\": number | null,  // The number of distinct top-level product categories (integer)\n"
+        "  \"ecommerce_platform\": string | null,  // Shopping cart platform (e.g. 'Shopify', 'Magento', 'WooCommerce', 'BigCommerce', 'custom-built')\n"
+        "  \"website_platform\": string | null,  // General CMS/site builder if identifiable (e.g. 'WordPress', 'Wix', 'custom')\n"
+        "  \"shipping_methods\": string[],  // Available shipping options\n"
+        "  \"payment_methods\": string[],  // Accepted payment methods\n"
+        "  \"has_mobile_app\": boolean | null,\n"
+        "  \"has_subscription_model\": boolean | null,\n"
+        "  \"international_shipping\": boolean | null\n"
         "}\n\n"
         "Rules:\n"
         "- Do not invent or guess information. If you cannot find reliable information after searching, return `null` for single fields or empty arrays `[]` for list fields.\n"
@@ -612,6 +728,22 @@ def _build_ad_agency_prompts_ecommerce(user_data: Any) -> Tuple[str, str]:
     )
 
     return system_text, user_text
+
+
+def _normalize_ecommerce_output(parsed: Dict[str, Any]) -> None:
+    """Normalize ecommerce-related keys in parsed for Zoho: string forms, categories_count alias, catalogue_size as int."""
+    # Zoho-friendly string forms for payment/shipping (comma-separated)
+    pm = parsed.get("payment_methods")
+    parsed["payment_methods_str"] = ", ".join(pm) if isinstance(pm, list) and pm else (pm if isinstance(pm, str) else "")
+    sm = parsed.get("shipping_methods")
+    parsed["shipping_methods_str"] = ", ".join(sm) if isinstance(sm, list) and sm else (sm if isinstance(sm, str) else "")
+    # Alias for Zoho 'Categories Count (int)'
+    pc = parsed.get("product_categories_count")
+    parsed["categories_count"] = int(pc) if pc is not None and isinstance(pc, (int, float)) else None
+    # Ensure catalogue_size is int when present
+    cs = parsed.get("catalogue_size")
+    if cs is not None and isinstance(cs, (int, float)):
+        parsed["catalogue_size"] = int(cs)
 
 
 def _parse_strict_json_object(text: str) -> Dict[str, Any]:
