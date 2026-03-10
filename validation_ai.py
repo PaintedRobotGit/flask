@@ -104,6 +104,7 @@ def validate_ai_payload():
             }), 502
 
         _normalize_primary_output(parsed)
+        _ensure_ecommerce_keys(parsed)
 
         # Website tech call (third call) – four booleans: Google Ads, Meta Ads, LinkedIn Ads, Tag Manager
         parsed["google_ads"] = False
@@ -132,24 +133,12 @@ def validate_ai_payload():
             except (requests.HTTPError, requests.RequestException, ValueError):
                 pass  # keep defaults false
 
-        # Conditional ecommerce-specific call
-        if customer_type == "ecommerce":
-            # Initialize ecommerce-specific fields to null/empty (will be populated by ecommerce call)
-            parsed["catalogue_size"] = None
-            parsed["product_categories_count"] = None
-            parsed["categories_count"] = None
-            parsed["ecommerce_platform"] = None
-            parsed["website_platform"] = None
-            parsed["shipping_methods"] = []
-            parsed["payment_methods"] = []
-            parsed["payment_methods_str"] = ""
-            parsed["shipping_methods_str"] = ""
-            parsed["has_mobile_app"] = None
-            parsed["has_subscription_model"] = None
-            parsed["international_shipping"] = None
+            # Ecommerce call (run when we have a URL; use same fetched HTML for reliable extraction)
             vendor_response_ecom = None
             try:
-                system_instruction_text_ecom, user_prompt_text_ecom = _build_ad_agency_prompts_ecommerce(user_data)
+                system_instruction_text_ecom, user_prompt_text_ecom = _build_ad_agency_prompts_ecommerce(
+                    user_data, website_url=website_url, html_snippet=html_snippet
+                )
                 completion_text_ecom, vendor_response_ecom = _call_gemini_generate_content(
                     api_key=gemini_key,
                     model=model,
@@ -158,11 +147,7 @@ def validate_ai_payload():
                     read_timeout_seconds=read_timeout_seconds,
                     connect_timeout_seconds=connect_timeout_seconds,
                 )
-                
-                # Check for empty output before parsing
                 if not completion_text_ecom or not completion_text_ecom.strip():
-                    # Empty output - set to null but don't fail
-                    parsed["catalogue_size"] = None
                     if debug_mode:
                         parsed["_ecommerce_call_error"] = {
                             "message": "Gemini API returned empty output (ecommerce call)",
@@ -171,12 +156,9 @@ def validate_ai_payload():
                         }
                 else:
                     parsed_ecom = _parse_strict_json_object(completion_text_ecom)
-                    # Merge ecommerce-specific fields into primary result
                     parsed.update(parsed_ecom)
                     _normalize_ecommerce_output(parsed)
             except requests.HTTPError as http_err:
-                # Log error but don't fail - primary data is still valid
-                parsed["catalogue_size"] = None
                 if debug_mode:
                     parsed["_ecommerce_call_error"] = {
                         "message": "Gemini API HTTP error (ecommerce call)",
@@ -184,8 +166,6 @@ def validate_ai_payload():
                         "response": getattr(http_err, "response", None).text if getattr(http_err, "response", None) else None,
                     }
             except requests.RequestException as req_err:
-                # Log error but don't fail - primary data is still valid
-                parsed["catalogue_size"] = None
                 if debug_mode:
                     parsed["_ecommerce_call_error"] = {
                         "message": "Gemini API request failed (ecommerce call)",
@@ -193,13 +173,11 @@ def validate_ai_payload():
                         "gemini_response": vendor_response_ecom,
                     }
             except ValueError as parse_err:
-                # Log error but don't fail - primary data is still valid
-                parsed["catalogue_size"] = None
                 if debug_mode:
                     parsed["_ecommerce_call_error"] = {
                         "message": "Model output was not valid JSON object (ecommerce call)",
                         "details": str(parse_err),
-                        "raw_output": completion_text_ecom if 'completion_text_ecom' in locals() else None,
+                        "raw_output": completion_text_ecom if "completion_text_ecom" in locals() else None,
                         "gemini_response": vendor_response_ecom,
                     }
 
@@ -244,6 +222,7 @@ def validate_ai_payload():
             )
             parsed = _parse_strict_json_object(completion_text)
             _normalize_primary_output(parsed)
+            _ensure_ecommerce_keys(parsed)
 
             # Website tech call (third call) – four booleans: Google Ads, Meta Ads, LinkedIn Ads, Tag Manager
             parsed["google_ads"] = False
@@ -272,24 +251,12 @@ def validate_ai_payload():
                 except (requests.HTTPError, requests.RequestException, ValueError):
                     pass  # keep defaults false
 
-            # Conditional ecommerce-specific call
-            if customer_type_value == "ecommerce":
-                # Initialize ecommerce-specific fields to null/empty (will be populated by ecommerce call)
-                parsed["catalogue_size"] = None
-                parsed["product_categories_count"] = None
-                parsed["categories_count"] = None
-                parsed["ecommerce_platform"] = None
-                parsed["website_platform"] = None
-                parsed["shipping_methods"] = []
-                parsed["payment_methods"] = []
-                parsed["payment_methods_str"] = ""
-                parsed["shipping_methods_str"] = ""
-                parsed["has_mobile_app"] = None
-                parsed["has_subscription_model"] = None
-                parsed["international_shipping"] = None
+                # Ecommerce call (run when we have a URL; use same fetched HTML)
                 try:
-                    system_instruction_text_ecom, user_prompt_text_ecom = _build_ad_agency_prompts_ecommerce(payload_data)
-                    completion_text_ecom, vendor_response_ecom = _call_gemini_generate_content(
+                    system_instruction_text_ecom, user_prompt_text_ecom = _build_ad_agency_prompts_ecommerce(
+                        payload_data, website_url=website_url, html_snippet=html_snippet
+                    )
+                    completion_text_ecom, _ = _call_gemini_generate_content(
                         api_key=gemini_api_key,
                         model=model_name,
                         prompt=user_prompt_text_ecom,
@@ -297,15 +264,13 @@ def validate_ai_payload():
                         read_timeout_seconds=rt_seconds,
                         connect_timeout_seconds=ct_seconds,
                     )
-                    parsed_ecom = _parse_strict_json_object(completion_text_ecom)
-                    # Merge ecommerce-specific fields into primary result
-                    parsed.update(parsed_ecom)
-                    _normalize_ecommerce_output(parsed)
+                    if completion_text_ecom and completion_text_ecom.strip():
+                        parsed_ecom = _parse_strict_json_object(completion_text_ecom)
+                        parsed.update(parsed_ecom)
+                        _normalize_ecommerce_output(parsed)
                 except (requests.HTTPError, requests.RequestException, ValueError):
-                    # Log error but don't fail - primary data is still valid
-                    # Set catalogue_size to null as fallback
-                    parsed["catalogue_size"] = None
-            
+                    pass
+
             result_body: Dict[str, Any] = {
                 "status": "ok",
                 "Record_ID": record_id_value,
@@ -663,12 +628,15 @@ def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
     return system_text, user_text
 
 
-def _build_ad_agency_prompts_ecommerce(user_data: Any) -> Tuple[str, str]:
+def _build_ad_agency_prompts_ecommerce(
+    user_data: Any,
+    website_url: Optional[str] = None,
+    html_snippet: Optional[str] = None,
+) -> Tuple[str, str]:
     """Build system instruction and user prompt for ecommerce-specific fields only.
 
-    Accepts either a string or any JSON-serializable structure in user_data.
+    If html_snippet is provided, the model will use the page source as the primary source for extraction.
     Returns (system_instruction_text, user_prompt_text).
-    This is a focused call that only requests ecommerce-specific data like catalogue_size.
     """
     # Normalize input into a text block to embed verbatim for analysis
     if isinstance(user_data, str):
@@ -681,20 +649,35 @@ def _build_ad_agency_prompts_ecommerce(user_data: Any) -> Tuple[str, str]:
             raise ValueError("Unsupported 'data' format. Provide a string or JSON-serializable object.")
 
     system_text = (
-        "You are an elite advertising agency assistant. Your job is to research companies on the public web using Google Search "
-        "and compile accurate, marketing-relevant intelligence for client qualification and sales prospecting. "
-        "You are researching these companies as POTENTIAL CLIENTS to pitch your agency's services TO them, not as existing clients. "
-        "Treat the input as seed hints (e.g., company name, domain, notes). "
-        "Prioritize official and authoritative sources. Do not fabricate or guess; if data is unavailable, leave fields empty or null. "
-        "This is a focused research task for ecommerce-specific metrics only."
+        "You are an elite advertising agency assistant. Your job is to extract ecommerce-specific information "
+        "from the provided data (page source and/or seed hints). Use the page HTML when provided as the primary "
+        "source: look for platform in script/footer, payment/shipping in page text or footer, categories in nav. "
+        "Do not fabricate; use null or [] when data is unavailable."
     )
+
+    if html_snippet and website_url:
+        intro = (
+            "**Primary source:** The raw HTML of the company's website is provided below. Use it to extract ecommerce data. "
+            "Search the HTML for: ecommerce platform (Shopify, WooCommerce, etc. in script/footer), website platform (WordPress, Wix in meta/source), "
+            "payment methods (Visa, PayPal, etc. in footer/checkout), shipping methods (text or links), top-level product categories (nav menus, links). "
+            "Also use Google Search with the seed hints for catalogue size, mobile app, subscription, international shipping if not visible in the HTML.\n\n"
+            "**URL:** " + website_url + "\n\n"
+            "**Page HTML/source (extract from this):**\n"
+            "---BEGIN PAGE SOURCE---\n" + html_snippet + "\n---END PAGE SOURCE---\n\n"
+            "**Seed hints (for search when needed):**\n" + data_block + "\n\n"
+        )
+    else:
+        intro = (
+            "Your task is to find ecommerce-specific information about a company based on the provided seed hints. "
+            "Use Google Search and website exploration."
+            + ("\n\n**Company website (inspect this URL):** " + website_url if website_url else "")
+            + "\n\n**SEARCH STRATEGY:** Use multiple targeted Google Search queries and website exploration:\n\n"
+        )
 
     # Request structured JSON focused only on ecommerce-specific fields
     user_text = (
-        "Your task is to find ecommerce-specific information about a company based on the provided seed hints. "
-        "**IMPORTANT:** This company is confirmed to be an ecommerce company (sells products online). "
-        "Research the following ecommerce-specific metrics that would be valuable for an advertising agency to know:\n\n"
-        "**SEARCH STRATEGY:** Use multiple targeted Google Search queries and website exploration:\n\n"
+        intro
+        +
         "**1. Catalog Size (catalogue_size):**\n"
         "   - Search for '[company name] SKU count' or '[company name] number of SKUs'\n"
         "   - Search for '[company name] product catalog size' or '[company name] total products'\n"
@@ -846,6 +829,27 @@ def _normalize_primary_output(parsed: Dict[str, Any]) -> None:
             for sub in ("audience", "tone_style", "differentiators", "competitors", "digital_marketing_opportunities"):
                 if sub not in parsed[key]:
                     parsed[key][sub] = [] if sub in ("differentiators", "competitors", "digital_marketing_opportunities") else None
+
+
+def _ensure_ecommerce_keys(parsed: Dict[str, Any]) -> None:
+    """Ensure all ecommerce-related keys exist in parsed with null/empty defaults so Zoho always gets the same schema."""
+    defaults: Dict[str, Any] = {
+        "catalogue_size": None,
+        "product_categories_count": None,
+        "categories_count": None,
+        "ecommerce_platform": None,
+        "website_platform": None,
+        "shipping_methods": [],
+        "payment_methods": [],
+        "payment_methods_str": "",
+        "shipping_methods_str": "",
+        "has_mobile_app": None,
+        "has_subscription_model": None,
+        "international_shipping": None,
+    }
+    for key, default in defaults.items():
+        if key not in parsed:
+            parsed[key] = default
 
 
 def _normalize_ecommerce_output(parsed: Dict[str, Any]) -> None:
