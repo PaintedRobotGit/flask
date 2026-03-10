@@ -113,7 +113,8 @@ def validate_ai_payload():
         website_url = _get_website_url_for_calls(parsed, user_data)
         if website_url:
             try:
-                system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url)
+                html_snippet = _fetch_page_html(website_url)
+                system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url, html_snippet)
                 completion_tech, _ = _call_gemini_generate_content(
                     api_key=gemini_key,
                     model=model,
@@ -252,7 +253,8 @@ def validate_ai_payload():
             website_url = _get_website_url_for_calls(parsed, payload_data)
             if website_url:
                 try:
-                    system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url)
+                    html_snippet = _fetch_page_html(website_url)
+                    system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url, html_snippet)
                     completion_tech, _ = _call_gemini_generate_content(
                         api_key=gemini_api_key,
                         model=model_name,
@@ -465,42 +467,90 @@ def _get_website_url_for_calls(parsed_primary: Dict[str, Any], user_data: Any) -
     return None
 
 
-def _build_ad_agency_prompts_website_tech(website_url: str) -> Tuple[str, str]:
+# Max characters of fetched HTML to send to the model (keeps context within limits; head + early body usually has the tags)
+_FETCHED_HTML_MAX_CHARS = 70000
+
+
+def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
+    """Fetch the raw HTML of a URL and return the first _FETCHED_HTML_MAX_CHARS characters, or None on failure."""
+    if not url or not url.strip().startswith("http"):
+        return None
+    try:
+        resp = requests.get(
+            url,
+            timeout=timeout_seconds,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0; +https://example.com/bot)"},
+            allow_redirects=True,
+        )
+        resp.raise_for_status()
+        text = resp.text
+        if not text:
+            return None
+        if len(text) > _FETCHED_HTML_MAX_CHARS:
+            text = text[:_FETCHED_HTML_MAX_CHARS] + "\n\n[... HTML truncated ...]"
+        return text
+    except Exception:
+        return None
+
+
+def _build_ad_agency_prompts_website_tech(website_url: str, html_snippet: Optional[str] = None) -> Tuple[str, str]:
     """Build system instruction and user prompt for website technology detection (four booleans only).
 
+    If html_snippet is provided, the model will use it as the primary source for detection instead of visiting the URL.
     Returns (system_instruction_text, user_prompt_text).
     Output schema: google_ads, meta_ads, linkedin_ads, tag_manager (all boolean).
     """
     system_text = (
-        "You are a technical analyst. Your only job is to determine whether a given website uses specific "
-        "advertising and tag-management technologies by inspecting the live site. Use Google Search to visit "
-        "the URL and inspect page source, script tags, network requests, and any inline or GTM-loaded code. "
-        "Return true if you find evidence the technology is present; return false only when you have looked "
-        "and found no such evidence. Do not guess from company type. Accuracy is critical—do not miss "
-        "tags that are loaded via Tag Manager or in non-obvious script blocks."
+        "You are a technical analyst. Your only job is to determine whether a website uses specific "
+        "advertising and tag-management technologies by inspecting the page source (HTML/script content). "
+        "You will be given either the raw HTML of the page or a URL. Search the provided content for the "
+        "exact script URLs, identifiers, and code patterns listed. Return true if you find evidence; "
+        "return false only when you have searched and found no such indicators. Do not guess from company type."
     )
-    user_text = (
-        "Visit this website URL and thoroughly inspect the page source (HTML, all script tags, dataLayer, and any tracking code). "
-        "Check the homepage and, if you can, one other key page (e.g. product or contact). For each technology below, "
-        "set true if you find evidence it is present; set false only if you have inspected and found no indicators.\n\n"
-        "**URL to inspect:** " + website_url + "\n\n"
-        "**Technologies to detect:**\n"
-        "1. **Google Ads** – Set true if you find ANY of: (a) gtag or gtag/js with aw-*, googleadservices.com, or doubleclick in script src or inline code; "
-        "(b) googletagmanager.com/gtag or /gtag/js in script src; (c) conversion_id, gclid, or 'aw-' in page source or dataLayer; "
-        "(d) google.com/pagead/ or dc.js. IMPORTANT: Many sites run Google Ads via Google Tag Manager, so the Ads script may be loaded by GTM. "
-        "If the site has GTM (see #4), search the full page source for 'aw-', 'googleadservices', 'gtag', 'conversion', or 'doubleclick'—if you find any, set google_ads true.\n"
-        "2. **Meta Ads (Facebook/Instagram)** – Look for: fbq(, fbevents.js, facebook.net/en_US/fbevents, Meta Pixel, connect.facebook.net.\n"
-        "3. **LinkedIn Ads** – Look for: LinkedIn Insight Tag, li.lms-analytics, lintracker, linkedin.com/li.lms-analytics, snap.licdn.com.\n"
-        "4. **Tag Manager (Google Tag Manager)** – Look for: googletagmanager.com/gtm.js, GTM-XXXXX container ID, dataLayer.\n\n"
-        "Return a single JSON object with exactly these four boolean fields:\n"
-        "{\n"
-        "  \"google_ads\": boolean,\n"
-        "  \"meta_ads\": boolean,\n"
-        "  \"linkedin_ads\": boolean,\n"
-        "  \"tag_manager\": boolean\n"
-        "}\n\n"
-        "Output only the JSON object, with no prose or explanation outside of it."
-    )
+    if html_snippet:
+        user_text = (
+            "Below is the raw HTML (and script content) of the website's page. Use it as the primary source to detect "
+            "each technology. Search for the exact strings and patterns described—do not rely on visiting the URL.\n\n"
+            "**URL (for reference):** " + website_url + "\n\n"
+            "**Technologies to detect:**\n"
+            "1. **Google Ads** – Set true if you find ANY of: gtag or gtag/js, aw- (e.g. aw-123456789), googleadservices.com, "
+            "doubleclick, googletagmanager.com/gtag, conversion_id, gclid, google.com/pagead/, dc.js, or 'Google Ads' in script/dataLayer.\n"
+            "2. **Meta Ads (Facebook/Instagram)** – Set true if you find: fbq(, fbevents.js, facebook.net, connect.facebook.net, "
+            "fbevents, Meta Pixel, or 'facebook' pixel in script/source.\n"
+            "3. **LinkedIn Ads** – Set true if you find: li.lms-analytics, lintracker, linkedin.com/li.lms-analytics, "
+            "snap.licdn.com, LinkedIn Insight Tag, or 'linkedin' tracking in script/source.\n"
+            "4. **Tag Manager (Google Tag Manager)** – Set true if you find: googletagmanager.com/gtm.js, GTM- (container ID), "
+            "dataLayer, or gtm.js in script src.\n\n"
+            "**Page HTML/source (search below for the patterns above):**\n"
+            "---BEGIN PAGE SOURCE---\n" + html_snippet + "\n---END PAGE SOURCE---\n\n"
+            "Return a single JSON object with exactly these four boolean fields:\n"
+            "{\n"
+            "  \"google_ads\": boolean,\n"
+            "  \"meta_ads\": boolean,\n"
+            "  \"linkedin_ads\": boolean,\n"
+            "  \"tag_manager\": boolean\n"
+            "}\n\n"
+            "Output only the JSON object, with no prose or explanation outside of it."
+        )
+    else:
+        user_text = (
+            "Visit this website URL and inspect the page source (HTML, script tags, dataLayer). "
+            "For each technology below, set true if you find evidence; set false only if you find no indicators.\n\n"
+            "**URL to inspect:** " + website_url + "\n\n"
+            "**Technologies to detect:**\n"
+            "1. **Google Ads** – gtag/aw-*, googleadservices.com, doubleclick, googletagmanager.com/gtag, conversion_id, gclid, dc.js.\n"
+            "2. **Meta Ads** – fbq(, fbevents.js, facebook.net, connect.facebook.net, Meta Pixel.\n"
+            "3. **LinkedIn Ads** – li.lms-analytics, lintracker, linkedin.com/li.lms-analytics, snap.licdn.com.\n"
+            "4. **Tag Manager** – googletagmanager.com/gtm.js, GTM-XXXXX, dataLayer.\n\n"
+            "Return a single JSON object with exactly these four boolean fields:\n"
+            "{\n"
+            "  \"google_ads\": boolean,\n"
+            "  \"meta_ads\": boolean,\n"
+            "  \"linkedin_ads\": boolean,\n"
+            "  \"tag_manager\": boolean\n"
+            "}\n\n"
+            "Output only the JSON object, with no prose or explanation outside of it."
+        )
     return system_text, user_text
 
 
