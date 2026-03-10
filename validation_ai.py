@@ -103,6 +103,8 @@ def validate_ai_payload():
                 "gemini_response": vendor_response,
             }), 502
 
+        _normalize_primary_output(parsed)
+
         # Website tech call (third call) – four booleans: Google Ads, Meta Ads, LinkedIn Ads, Tag Manager
         parsed["google_ads"] = False
         parsed["meta_ads"] = False
@@ -240,6 +242,7 @@ def validate_ai_payload():
                 connect_timeout_seconds=ct_seconds,
             )
             parsed = _parse_strict_json_object(completion_text)
+            _normalize_primary_output(parsed)
 
             # Website tech call (third call) – four booleans: Google Ads, Meta Ads, LinkedIn Ads, Tag Manager
             parsed["google_ads"] = False
@@ -552,6 +555,7 @@ def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
         "   - **Annual Revenue**: Search for '[company name] revenue', '[company name] annual report', '[company name] financials'. Prioritize official SEC filings, annual reports, or verified financial databases.\n"
         "   - **Size (Employees)**: Search for '[company name] employees', '[company name] workforce size', '[company name] company size'. Check LinkedIn company page, company website, or industry databases.\n"
         "   - **Locations**: Search for '[company name] locations', '[company name] offices', '[company name] headquarters'. Check company website, LinkedIn, or press releases.\n\n"
+        "**CRITICAL: You MUST return a single JSON object that includes EVERY key listed in the schema below. Do not omit any key. Use null for missing single values and [] or {} for missing lists/objects. The response must have all of: company_name, known_domains, social_media (with linkedin, twitter, facebook, instagram, tiktok, youtube, other inside it), contact (with emails, phones, addresses), industry, size_employees, annual_revenue, locations, products_services, value_proposition, marketing_insights (with audience, tone_style, differentiators, competitors, digital_marketing_opportunities), suggested_pitch_points, missing_information, website_audit, confidence, sources.**\n\n"
         "Return a single JSON object with the following schema and rules:\n"
         "{\n"
         "  \"company_name\": string | null,\n"
@@ -601,6 +605,7 @@ def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
         "- Deduplicate all lists (e.g., `known_domains`, `sources`).\n"
         "- **All phone numbers must be formatted with the correct country calling code, for example, `+1 (555) 555-5555` for US/Canada numbers.**\n"
         "- If multiple candidates exist for a field, pick the most authoritative or include the top 3.\n"
+        "- **SCHEMA COMPLETENESS:** Your response must contain every key in the schema. Do not return a partial object. Missing data must be null or empty arrays/objects, not omitted keys.\n"
         "- Output only the JSON object, with no prose or explanation outside of it.\n\n"
         f"Seed hints:\n{data_block}"
     )
@@ -732,6 +737,65 @@ def _build_ad_agency_prompts_ecommerce(user_data: Any) -> Tuple[str, str]:
     )
 
     return system_text, user_text
+
+
+def _normalize_primary_output(parsed: Dict[str, Any]) -> None:
+    """Ensure primary-call parsed has full schema. Fix malformed responses (e.g. social_media keys at top level) and fill missing keys."""
+    # If model returned social_media fields at top level instead of under "social_media", fix it
+    social_keys = ("linkedin", "twitter", "facebook", "instagram", "tiktok", "youtube", "other")
+    if "social_media" not in parsed and any(k in parsed for k in social_keys):
+        parsed["social_media"] = {
+            "linkedin": parsed.pop("linkedin", None),
+            "twitter": parsed.pop("twitter", None),
+            "facebook": parsed.pop("facebook", None),
+            "instagram": parsed.pop("instagram", None),
+            "tiktok": parsed.pop("tiktok", None),
+            "youtube": parsed.pop("youtube", None),
+            "other": parsed.pop("other", []) or [],
+        }
+    # Ensure social_media exists and has all keys
+    sm = parsed.get("social_media")
+    if not isinstance(sm, dict):
+        parsed["social_media"] = {}
+    sm = parsed["social_media"]
+    for k in social_keys:
+        if k not in sm:
+            sm[k] = [] if k == "other" else None
+    # Required top-level keys and defaults (so Zoho always gets full structure)
+    defaults: Dict[str, Any] = {
+        "company_name": None,
+        "known_domains": [],
+        "contact": {"emails": [], "phones": [], "addresses": []},
+        "industry": None,
+        "size_employees": None,
+        "annual_revenue": None,
+        "locations": [],
+        "products_services": [],
+        "value_proposition": None,
+        "marketing_insights": {
+            "audience": None,
+            "tone_style": None,
+            "differentiators": [],
+            "competitors": [],
+            "digital_marketing_opportunities": [],
+        },
+        "suggested_pitch_points": [],
+        "missing_information": [],
+        "website_audit": [],
+        "confidence": 0.0,
+        "sources": [],
+    }
+    for key, default in defaults.items():
+        if key not in parsed:
+            parsed[key] = default
+        elif key == "contact" and isinstance(parsed[key], dict):
+            for sub in ("emails", "phones", "addresses"):
+                if sub not in parsed[key]:
+                    parsed[key][sub] = []
+        elif key == "marketing_insights" and isinstance(parsed[key], dict):
+            for sub in ("audience", "tone_style", "differentiators", "competitors", "digital_marketing_opportunities"):
+                if sub not in parsed[key]:
+                    parsed[key][sub] = [] if sub in ("differentiators", "competitors", "digital_marketing_opportunities") else None
 
 
 def _normalize_ecommerce_output(parsed: Dict[str, Any]) -> None:
