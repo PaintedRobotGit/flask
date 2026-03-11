@@ -590,8 +590,7 @@ _ECOMMERCE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
     ("wp-content/plugins/woocommerce", "WooCommerce"),
     ("woocommerce", "WooCommerce"),
     ("wc-api", "WooCommerce"),
-    ("mage/", "Magento"),
-    ("magento", "Magento"),
+    ("magento", "Magento"),  # avoid "mage/" — matches "image/"
     ("static/version", "Magento"),
     ("cdn.bigcommerce.com", "BigCommerce"),
     ("mybigcommerce.com", "BigCommerce"),
@@ -842,7 +841,7 @@ def _build_ad_agency_prompts_ecommerce(
         "   **CRITICAL: Only return a platform name if you find DEFINITIVE, VERIFIABLE evidence. Do NOT guess based on appearance or assumptions.**\n"
         "   **REQUIRED EVIDENCE - You must find at least ONE of these definitive indicators:**\n"
         "   - **Shopify**: Look for '*.myshopify.com' in the URL, 'Powered by Shopify' in footer/source, 'cdn.shopify.com' in page source, or 'Shopify.theme' in JavaScript\n"
-        "   - **Magento**: Look for 'Magento' in page source, '/static/version' in URLs, 'mage/' in JavaScript paths, or 'Magento' in meta tags\n"
+        "   - **Magento**: Look for 'Magento' in page source, '/static/version' in URLs, or 'Magento' in meta tags\n"
         "   - **WooCommerce**: Look for 'WooCommerce' in page source, WordPress indicators (wp-content, wp-includes), or 'woocommerce' in JavaScript/CSS paths\n"
         "   - **BigCommerce**: Look for '*.mybigcommerce.com' in URL, 'BigCommerce' in page source, or 'cdn.bigcommerce.com' in resources\n"
         "   - **Salesforce Commerce Cloud**: Look for 'demandware.net' or 'commercecloud.salesforce.com' in URLs/resources, or 'Demandware' in source\n"
