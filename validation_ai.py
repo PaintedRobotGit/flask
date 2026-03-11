@@ -2,12 +2,14 @@ from flask import Blueprint, request, jsonify
 import requests
 from typing import Any, Dict, Tuple, Optional
 import json
+import logging
 import time
 import threading
 import os
 
 
 validation_ai_bp = Blueprint("validation_ai", __name__)
+logger = logging.getLogger("validation_ai")
 
 
 @validation_ai_bp.route("/validation_ai", methods=["POST"])
@@ -36,12 +38,14 @@ def validate_ai_payload():
 
     # When DEBUG=true, behave as before: run and return the data to the caller
     if debug_mode:
+        logger.info("validation_ai: DEBUG request record_id=%s customer_type=%s data_keys=%s", record_id, customer_type, list(user_data.keys()) if isinstance(user_data, dict) else type(user_data).__name__)
         missing_keys = []
         if not gemini_key:
             missing_keys.append("Gemini_Key")
         if user_data is None:
             missing_keys.append("data")
         if missing_keys:
+            logger.warning("validation_ai: missing keys %s", missing_keys)
             return (
                 jsonify({
                     "status": "error",
@@ -105,6 +109,8 @@ def validate_ai_payload():
 
         _normalize_primary_output(parsed)
         _ensure_ecommerce_keys(parsed)
+        known = parsed.get("known_domains") or []
+        logger.info("validation_ai: primary call ok known_domains=%s company_name=%s", len(known), parsed.get("company_name"))
 
         # Website tech call (third call) – four booleans: Google Ads, Meta Ads, LinkedIn Ads, Tag Manager
         parsed["google_ads"] = False
@@ -112,14 +118,22 @@ def validate_ai_payload():
         parsed["linkedin_ads"] = False
         parsed["tag_manager"] = False
         website_url = _get_website_url_for_calls(parsed, user_data)
+        if not website_url:
+            logger.warning("validation_ai: no website_url (known_domains empty and no domain in data); skipping tech and ecommerce calls")
         if website_url:
+            logger.info("validation_ai: website_url=%s fetching HTML", website_url)
             try:
                 html_snippet = _fetch_page_html(website_url)
+                if html_snippet:
+                    logger.info("validation_ai: HTML fetched len=%s", len(html_snippet))
+                else:
+                    logger.warning("validation_ai: HTML fetch failed or empty for %s", website_url)
                 # Tag Manager: server-side detection from HTML (more reliable than AI)
                 parsed["tag_manager"] = _detect_tag_manager_in_html(html_snippet) if html_snippet else False
                 # Website/ecommerce platform: server-side detection from HTML (overrides AI after ecommerce merge)
                 detected_website_platform = _detect_website_platform_in_html(html_snippet) if html_snippet else None
                 detected_ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet) if html_snippet else None
+                logger.info("validation_ai: platform detection from HTML website=%s ecommerce=%s tag_manager=%s", detected_website_platform, detected_ecommerce_platform, parsed["tag_manager"])
                 system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url, html_snippet)
                 completion_tech, _ = _call_gemini_generate_content(
                     api_key=gemini_key,
@@ -134,8 +148,11 @@ def validate_ai_payload():
                     parsed["google_ads"] = bool(parsed_tech.get("google_ads"))
                     parsed["meta_ads"] = bool(parsed_tech.get("meta_ads"))
                     parsed["linkedin_ads"] = bool(parsed_tech.get("linkedin_ads"))
-            except (requests.HTTPError, requests.RequestException, ValueError):
-                pass  # keep defaults false
+                    logger.info("validation_ai: website_tech call ok google_ads=%s meta_ads=%s linkedin_ads=%s", parsed["google_ads"], parsed["meta_ads"], parsed["linkedin_ads"])
+                else:
+                    logger.warning("validation_ai: website_tech call empty or failed")
+            except (requests.HTTPError, requests.RequestException, ValueError) as e:
+                logger.warning("validation_ai: website_tech call error %s", e)
 
             # Ecommerce call (run when we have a URL; use same fetched HTML for reliable extraction)
             vendor_response_ecom = None
@@ -152,6 +169,7 @@ def validate_ai_payload():
                     connect_timeout_seconds=connect_timeout_seconds,
                 )
                 if not completion_text_ecom or not completion_text_ecom.strip():
+                    logger.warning("validation_ai: ecommerce call returned empty output")
                     if debug_mode:
                         parsed["_ecommerce_call_error"] = {
                             "message": "Gemini API returned empty output (ecommerce call)",
@@ -162,6 +180,7 @@ def validate_ai_payload():
                     parsed_ecom = _parse_strict_json_object(completion_text_ecom)
                     parsed.update(parsed_ecom)
                     _normalize_ecommerce_output(parsed)
+                    logger.info("validation_ai: ecommerce call ok catalogue_size=%s ecommerce_platform=%s", parsed.get("catalogue_size"), parsed.get("ecommerce_platform"))
             except requests.HTTPError as http_err:
                 if debug_mode:
                     parsed["_ecommerce_call_error"] = {
@@ -191,6 +210,7 @@ def validate_ai_payload():
                 parsed["ecommerce_platform"] = detected_ecommerce_platform
 
         _infer_sales_type(parsed)
+        logger.info("validation_ai: sales_type=%s returning output keys=%s", parsed.get("sales_type"), list(parsed.keys()))
 
         return jsonify({
             "status": "ok",
@@ -220,6 +240,7 @@ def validate_ai_payload():
         )
 
     def _background_worker(record_id_value: Any, gemini_api_key: str, payload_data: Any, model_name: str, rt_seconds: int, ct_seconds: int, callback_url: str, customer_type_value: str) -> None:
+        logger.info("validation_ai: background worker started Record_ID=%s", record_id_value)
         try:
             # Primary call - common fields for all customer types
             system_instruction_text, user_prompt_text = _build_ad_agency_prompts_primary(payload_data)
@@ -234,6 +255,8 @@ def validate_ai_payload():
             parsed = _parse_strict_json_object(completion_text)
             _normalize_primary_output(parsed)
             _ensure_ecommerce_keys(parsed)
+            known = parsed.get("known_domains") or []
+            logger.info("validation_ai: [%s] primary ok known_domains=%s company_name=%s", record_id_value, len(known), parsed.get("company_name"))
 
             # Website tech call (third call) – four booleans: Google Ads, Meta Ads, LinkedIn Ads, Tag Manager
             parsed["google_ads"] = False
@@ -241,7 +264,10 @@ def validate_ai_payload():
             parsed["linkedin_ads"] = False
             parsed["tag_manager"] = False
             website_url = _get_website_url_for_calls(parsed, payload_data)
+            if not website_url:
+                logger.warning("validation_ai: [%s] no website_url; skipping tech and ecommerce", record_id_value)
             if website_url:
+                logger.info("validation_ai: [%s] website_url=%s", record_id_value, website_url)
                 try:
                     html_snippet = _fetch_page_html(website_url)
                     # Tag Manager: server-side detection from HTML (more reliable than AI)
@@ -292,6 +318,7 @@ def validate_ai_payload():
                     parsed["ecommerce_platform"] = detected_ecommerce_platform
 
             _infer_sales_type(parsed)
+            logger.info("validation_ai: [%s] sales_type=%s posting to Zoho", record_id_value, parsed.get("sales_type"))
 
             result_body: Dict[str, Any] = {
                 "status": "ok",
@@ -300,6 +327,7 @@ def validate_ai_payload():
                 "output": parsed,
             }
         except requests.HTTPError as http_err:
+            logger.warning("validation_ai: [%s] HTTP error %s", record_id_value, http_err)
             result_body = {
                 "status": "error",
                 "Record_ID": record_id_value,
@@ -315,6 +343,7 @@ def validate_ai_payload():
                 "details": str(req_err),
             }
         except ValueError as parse_err:
+            logger.warning("validation_ai: [%s] parse error %s", record_id_value, parse_err)
             result_body = {
                 "status": "error",
                 "Record_ID": record_id_value,
@@ -322,6 +351,7 @@ def validate_ai_payload():
                 "details": str(parse_err),
             }
         except Exception as e:
+            logger.exception("validation_ai: [%s] unexpected error %s", record_id_value, e)
             result_body = {
                 "status": "error",
                 "Record_ID": record_id_value,
@@ -444,7 +474,10 @@ def _get_website_url_for_calls(parsed_primary: Dict[str, Any], user_data: Any) -
             d = "https://" + d
         return d
     if isinstance(user_data, dict):
-        for key in ("website", "domain", "url", "website_url", "domain_url"):
+        for key in (
+            "website", "domain", "url", "website_url", "domain_url",
+            "Company_Website", "Web_Address", "Website", "Domain", "Company_Domain",
+        ):
             v = user_data.get(key)
             if v and isinstance(v, str) and v.strip():
                 v = v.strip()
@@ -459,6 +492,7 @@ _FETCHED_HTML_MAX_CHARS = 70000
 
 # Common patterns for Google Tag Manager / gtag in page source (used for server-side detection)
 _TAG_MANAGER_PATTERNS = (
+    "googletagmanager.com/gtag/js",  # exact script src e.g. .../gtag/js?id=AW-...
     "googletagmanager.com/gtag",
     "googletagmanager.com/gtm.js",
     "googletagmanager.com/gtm.",
@@ -541,6 +575,12 @@ def _detect_ecommerce_platform_in_html(html: str) -> Optional[str]:
     return None
 
 
+# Browser-like User-Agent so servers return the same HTML as when viewing source (avoids bot-only pages missing scripts)
+_FETCH_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+
+
 def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
     """Fetch the raw HTML of a URL and return the first _FETCHED_HTML_MAX_CHARS characters, or None on failure."""
     if not url or not url.strip().startswith("http"):
@@ -549,7 +589,11 @@ def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
         resp = requests.get(
             url,
             timeout=timeout_seconds,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; ResearchBot/1.0; +https://example.com/bot)"},
+            headers={
+                "User-Agent": _FETCH_USER_AGENT,
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.9",
+            },
             allow_redirects=True,
         )
         resp.raise_for_status()
