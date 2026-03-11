@@ -1,4 +1,5 @@
 from flask import Blueprint, request, jsonify
+import re
 import requests
 from typing import Any, Dict, Tuple, Optional
 import json
@@ -511,16 +512,17 @@ def _detect_tag_manager_in_html(html: str) -> bool:
 # These platforms require conversion/tracking tags on the advertiser's site when they run campaigns
 # (e.g. gtag/aw-* for Google Ads, Meta Pixel for Meta/Facebook Ads, LinkedIn Insight Tag).
 # So presence of these scripts on the company's page = strong proxy for "they run ads there".
+# Patterns must be specific to Ads (not GA-only): avoid "gtag/js" and "googletagmanager.com/gtag"
+# alone since many sites use those for Analytics only. "aw-" is checked via regex to avoid
+# matching common words (draw, saw, law, etc.).
 _GOOGLE_ADS_PATTERNS = (
-    "googletagmanager.com/gtag",
-    "gtag/js",
     "googleadservices.com",
-    "aw-",  # Google Ads conversion id in gtag config
     "doubleclick.net",
     "dc.js",
-    "conversion_id",
     "google.com/pagead",
 )
+# Conversion ID in gtag: aw-<digits>. We match via regex to avoid "aw-" matching "draw"/"saw"/"law".
+_GOOGLE_ADS_AW_REGEX = re.compile(r"aw-\d+", re.IGNORECASE)
 _META_ADS_PATTERNS = (
     "fbevents.js",
     "connect.facebook.net",
@@ -543,7 +545,12 @@ def _detect_google_ads_in_html(html: str) -> bool:
     if not html or not isinstance(html, str):
         return False
     lower = html.lower()
-    return any(p.lower() in lower for p in _GOOGLE_ADS_PATTERNS)
+    if any(p.lower() in lower for p in _GOOGLE_ADS_PATTERNS):
+        return True
+    # Conversion ID aw-<digits> (e.g. gtag config); use regex to avoid matching "draw"/"saw"/"law"
+    if _GOOGLE_ADS_AW_REGEX.search(html):
+        return True
+    return False
 
 
 def _detect_meta_ads_in_html(html: str) -> bool:
