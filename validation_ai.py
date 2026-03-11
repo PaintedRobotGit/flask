@@ -190,6 +190,8 @@ def validate_ai_payload():
             if detected_ecommerce_platform is not None:
                 parsed["ecommerce_platform"] = detected_ecommerce_platform
 
+        _infer_sales_type(parsed)
+
         return jsonify({
             "status": "ok",
             "model": model,
@@ -288,6 +290,8 @@ def validate_ai_payload():
                     parsed["website_platform"] = detected_website_platform
                 if detected_ecommerce_platform is not None:
                     parsed["ecommerce_platform"] = detected_ecommerce_platform
+
+            _infer_sales_type(parsed)
 
             result_body: Dict[str, Any] = {
                 "status": "ok",
@@ -942,10 +946,34 @@ def _ensure_ecommerce_keys(parsed: Dict[str, Any]) -> None:
         "has_mobile_app": None,
         "has_subscription_model": None,
         "international_shipping": None,
+        "sales_type": None,
     }
     for key, default in defaults.items():
         if key not in parsed:
             parsed[key] = default
+
+
+def _infer_sales_type(parsed: Dict[str, Any]) -> None:
+    """Set parsed['sales_type'] to 'E-Commerce', 'Lead Gen', or 'Other' from validation data and website technology."""
+    # E-Commerce: ecommerce platform detected, or catalogue/categories present
+    ecom_platform = (parsed.get("ecommerce_platform") or "").strip() if isinstance(parsed.get("ecommerce_platform"), str) else None
+    catalogue_size = parsed.get("catalogue_size")
+    categories_count = parsed.get("product_categories_count") or parsed.get("categories_count")
+    if ecom_platform:
+        parsed["sales_type"] = "E-Commerce"
+        return
+    if catalogue_size is not None and (isinstance(catalogue_size, (int, float)) and catalogue_size > 0):
+        parsed["sales_type"] = "E-Commerce"
+        return
+    if categories_count is not None and (isinstance(categories_count, (int, float)) and categories_count > 0):
+        parsed["sales_type"] = "E-Commerce"
+        return
+    # Lead Gen: we have website/domain but no ecommerce signals (marketing/service site)
+    has_site = bool(parsed.get("known_domains")) or bool((parsed.get("website_platform") or "").strip())
+    if has_site:
+        parsed["sales_type"] = "Lead Gen"
+        return
+    parsed["sales_type"] = "Other"
 
 
 def _normalize_ecommerce_output(parsed: Dict[str, Any]) -> None:
