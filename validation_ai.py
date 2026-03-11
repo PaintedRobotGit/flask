@@ -136,38 +136,22 @@ def validate_ai_payload():
                     logger.info("validation_ai: HTML fetched len=%s", len(html_snippet))
                 else:
                     logger.warning("validation_ai: HTML fetch failed or empty for %s", website_url)
-                # Tag Manager: server-side detection from HTML (more reliable than AI)
+                # Ad/tag booleans: server-side detection from HTML (no AI call)
                 parsed["tag_manager"] = _detect_tag_manager_in_html(html_snippet) if html_snippet else False
-                logger.info("validation_ai: tag_manager from HTML=%s (html_len=%s)", parsed["tag_manager"], len(html_snippet) if html_snippet else 0)
+                parsed["google_ads"] = _detect_google_ads_in_html(html_snippet) if html_snippet else False
+                parsed["meta_ads"] = _detect_meta_ads_in_html(html_snippet) if html_snippet else False
+                parsed["linkedin_ads"] = _detect_linkedin_ads_in_html(html_snippet) if html_snippet else False
+                logger.info("validation_ai: ad/tag from HTML tag_manager=%s google_ads=%s meta_ads=%s linkedin_ads=%s", parsed["tag_manager"], parsed["google_ads"], parsed["meta_ads"], parsed["linkedin_ads"])
                 # Website/ecommerce platform: server-side detection from HTML (overrides AI after ecommerce merge)
                 detected_website_platform = _detect_website_platform_in_html(html_snippet) if html_snippet else None
                 detected_ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet) if html_snippet else None
-                logger.info("validation_ai: platform detection from HTML website=%s ecommerce=%s tag_manager=%s", detected_website_platform, detected_ecommerce_platform, parsed["tag_manager"])
-                system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url, html_snippet)
-                completion_tech, _ = _call_gemini_generate_content(
-                    api_key=gemini_key,
-                    model=model,
-                    prompt=user_prompt_tech,
-                    system_instruction=system_instruction_tech,
-                    read_timeout_seconds=read_timeout_seconds,
-                    connect_timeout_seconds=connect_timeout_seconds,
-                )
-                if completion_tech and completion_tech.strip():
-                    parsed_tech = _parse_strict_json_object(completion_tech)
-                    parsed["google_ads"] = bool(parsed_tech.get("google_ads"))
-                    parsed["meta_ads"] = bool(parsed_tech.get("meta_ads"))
-                    parsed["linkedin_ads"] = bool(parsed_tech.get("linkedin_ads"))
-                    logger.info("validation_ai: website_tech call ok google_ads=%s meta_ads=%s linkedin_ads=%s", parsed["google_ads"], parsed["meta_ads"], parsed["linkedin_ads"])
-                else:
-                    logger.warning("validation_ai: website_tech call empty or failed")
-            except (requests.HTTPError, requests.RequestException, ValueError) as e:
-                logger.warning("validation_ai: website_tech call error %s", e)
+                logger.info("validation_ai: platform detection from HTML website=%s ecommerce=%s", detected_website_platform, detected_ecommerce_platform)
 
-            # Ecommerce call (run when we have a URL; use same fetched HTML for reliable extraction)
+            # Ecommerce call: direct inquiry (URL + seed hints only; no HTML to AI)
             vendor_response_ecom = None
             try:
                 system_instruction_text_ecom, user_prompt_text_ecom = _build_ad_agency_prompts_ecommerce(
-                    user_data, website_url=website_url, html_snippet=html_snippet
+                    user_data, website_url=website_url
                 )
                 completion_text_ecom, vendor_response_ecom = _call_gemini_generate_content(
                     api_key=gemini_key,
@@ -283,33 +267,20 @@ def validate_ai_payload():
                         logger.info("validation_ai: [%s] HTML fetched len=%s", record_id_value, len(html_snippet))
                     else:
                         logger.warning("validation_ai: [%s] HTML fetch failed or empty for %s", record_id_value, website_url)
-                    # Tag Manager: server-side detection from HTML (more reliable than AI)
+                    # Ad/tag booleans and platform: server-side detection from HTML (no AI call)
                     parsed["tag_manager"] = _detect_tag_manager_in_html(html_snippet) if html_snippet else False
-                    logger.info("validation_ai: [%s] tag_manager from HTML=%s (html_len=%s)", record_id_value, parsed["tag_manager"], len(html_snippet) if html_snippet else 0)
-                    # Website/ecommerce platform: server-side detection from HTML
+                    parsed["google_ads"] = _detect_google_ads_in_html(html_snippet) if html_snippet else False
+                    parsed["meta_ads"] = _detect_meta_ads_in_html(html_snippet) if html_snippet else False
+                    parsed["linkedin_ads"] = _detect_linkedin_ads_in_html(html_snippet) if html_snippet else False
                     detected_website_platform = _detect_website_platform_in_html(html_snippet) if html_snippet else None
                     detected_ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet) if html_snippet else None
-                    system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url, html_snippet)
-                    completion_tech, _ = _call_gemini_generate_content(
-                        api_key=gemini_api_key,
-                        model=model_name,
-                        prompt=user_prompt_tech,
-                        system_instruction=system_instruction_tech,
-                        read_timeout_seconds=rt_seconds,
-                        connect_timeout_seconds=ct_seconds,
-                    )
-                    if completion_tech and completion_tech.strip():
-                        parsed_tech = _parse_strict_json_object(completion_tech)
-                        parsed["google_ads"] = bool(parsed_tech.get("google_ads"))
-                        parsed["meta_ads"] = bool(parsed_tech.get("meta_ads"))
-                        parsed["linkedin_ads"] = bool(parsed_tech.get("linkedin_ads"))
                 except (requests.HTTPError, requests.RequestException, ValueError):
                     pass  # keep defaults false
 
-                # Ecommerce call (run when we have a URL; use same fetched HTML)
+                # Ecommerce call: direct inquiry (URL only; no HTML to AI)
                 try:
                     system_instruction_text_ecom, user_prompt_text_ecom = _build_ad_agency_prompts_ecommerce(
-                        payload_data, website_url=website_url, html_snippet=html_snippet
+                        payload_data, website_url=website_url
                     )
                     completion_text_ecom, _ = _call_gemini_generate_content(
                         api_key=gemini_api_key,
@@ -501,15 +472,20 @@ def _get_website_url_for_calls(parsed_primary: Dict[str, Any], user_data: Any) -
     return None
 
 
-# Max characters of fetched HTML to send to the model (keeps context within limits; head + early body usually has the tags)
-_FETCHED_HTML_MAX_CHARS = 70000
+# Fetch up to this many characters from the page (used for both detection and AI; we truncate for AI below)
+_FETCHED_HTML_MAX_CHARS = 500000
+# Only this much HTML is sent to the model (avoids context overload); script-based detection uses the full fetch
+_FETCHED_HTML_MAX_CHARS_FOR_AI = 70000
 
 # Common patterns for Google Tag Manager / gtag in page source (used for server-side detection)
+# Include bare domain so dns-prefetch links (e.g. href="https://www.googletagmanager.com/") and any GTM reference match
 _TAG_MANAGER_PATTERNS = (
     "googletagmanager.com/gtag/js",  # exact script src e.g. .../gtag/js?id=AW-...
     "googletagmanager.com/gtag",
     "googletagmanager.com/gtm.js",
     "googletagmanager.com/gtm.",
+    "googletagmanager.com/ns.html",  # GTM iframe src
+    "googletagmanager.com",           # any reference (dns-prefetch, script, iframe)
     "GTM-",
     "Google tag (gtag.js)",
     "Google Tag Manager",
@@ -525,6 +501,61 @@ def _detect_tag_manager_in_html(html: str) -> bool:
         p.lower() in lower
         for p in _TAG_MANAGER_PATTERNS
     )
+
+
+# Ad-platform detection: we infer "company runs ads on this platform" from their website HTML.
+# These platforms require conversion/tracking tags on the advertiser's site when they run campaigns
+# (e.g. gtag/aw-* for Google Ads, Meta Pixel for Meta/Facebook Ads, LinkedIn Insight Tag).
+# So presence of these scripts on the company's page = strong proxy for "they run ads there".
+_GOOGLE_ADS_PATTERNS = (
+    "googletagmanager.com/gtag",
+    "gtag/js",
+    "googleadservices.com",
+    "aw-",  # Google Ads conversion id in gtag config
+    "doubleclick.net",
+    "dc.js",
+    "conversion_id",
+    "google.com/pagead",
+)
+_META_ADS_PATTERNS = (
+    "fbevents.js",
+    "connect.facebook.net",
+    "facebook.net/en_us/fbevents",
+    "fbq(",
+    "fbq('init'",
+    "meta pixel",
+)
+_LINKEDIN_ADS_PATTERNS = (
+    "li.lms-analytics",
+    "lintracker",
+    "linkedin.com/li.lms-analytics",
+    "snap.licdn.com",
+    "linkedin insight tag",
+)
+
+
+def _detect_google_ads_in_html(html: str) -> bool:
+    """True if the company's site has Google Ads tracking/conversion scripts (inference: they run Google Ads)."""
+    if not html or not isinstance(html, str):
+        return False
+    lower = html.lower()
+    return any(p.lower() in lower for p in _GOOGLE_ADS_PATTERNS)
+
+
+def _detect_meta_ads_in_html(html: str) -> bool:
+    """True if the company's site has Meta/Facebook Pixel (inference: they run Meta Ads)."""
+    if not html or not isinstance(html, str):
+        return False
+    lower = html.lower()
+    return any(p.lower() in lower for p in _META_ADS_PATTERNS)
+
+
+def _detect_linkedin_ads_in_html(html: str) -> bool:
+    """True if the company's site has LinkedIn Insight Tag (inference: they run LinkedIn Ads)."""
+    if not html or not isinstance(html, str):
+        return False
+    lower = html.lower()
+    return any(p.lower() in lower for p in _LINKEDIN_ADS_PATTERNS)
 
 
 # (pattern, platform_name) — first match wins. Order by specificity / reliability.
@@ -621,60 +652,13 @@ def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
         return None
 
 
-def _build_ad_agency_prompts_website_tech(website_url: str, html_snippet: Optional[str] = None) -> Tuple[str, str]:
-    """Build system instruction and user prompt for ad-platform detection (three booleans only).
-
-    Tag Manager is detected server-side via _detect_tag_manager_in_html; it is not asked of the AI.
-    Returns (system_instruction_text, user_prompt_text).
-    Output schema: google_ads, meta_ads, linkedin_ads (all boolean).
-    """
-    system_text = (
-        "You are a technical analyst. Your only job is to determine whether a website uses specific "
-        "advertising technologies (Google Ads, Meta/Facebook Ads, LinkedIn Ads) by inspecting the page source. "
-        "Search the provided content for the exact script URLs and code patterns listed. "
-        "Return true if you find evidence; return false only when you have searched and found no such indicators. "
-        "Do not guess from company type."
-    )
-    if html_snippet:
-        user_text = (
-            "Below is the raw HTML (and script content) of the website's page. Use it as the primary source to detect "
-            "each ad technology. Search for the exact strings and patterns described.\n\n"
-            "**URL (for reference):** " + website_url + "\n\n"
-            "**Technologies to detect (set true only if you find evidence in the source):**\n"
-            "1. **Google Ads** – Set true if you find ANY of: gtag or gtag/js, aw- (e.g. aw-123456789), googleadservices.com, "
-            "doubleclick, googletagmanager.com/gtag with Google Ads, conversion_id, gclid, google.com/pagead/, dc.js, or 'Google Ads' in script/dataLayer.\n"
-            "2. **Meta Ads (Facebook/Instagram)** – Set true if you find: fbq(, fbevents.js, facebook.net, connect.facebook.net, "
-            "fbevents, Meta Pixel, or 'facebook' pixel in script/source.\n"
-            "3. **LinkedIn Ads** – Set true if you find: li.lms-analytics, lintracker, linkedin.com/li.lms-analytics, "
-            "snap.licdn.com, LinkedIn Insight Tag, or 'linkedin' tracking in script/source.\n\n"
-            "**Page HTML/source (search below for the patterns above):**\n"
-            "---BEGIN PAGE SOURCE---\n" + html_snippet + "\n---END PAGE SOURCE---\n\n"
-            "Return a single JSON object with exactly these three boolean fields:\n"
-            "{\n"
-            "  \"google_ads\": boolean,\n"
-            "  \"meta_ads\": boolean,\n"
-            "  \"linkedin_ads\": boolean\n"
-            "}\n\n"
-            "Output only the JSON object, with no prose or explanation outside of it."
-        )
-    else:
-        user_text = (
-            "Visit this website URL and inspect the page source (HTML, script tags). "
-            "For each technology below, set true if you find evidence; set false only if you find no indicators.\n\n"
-            "**URL to inspect:** " + website_url + "\n\n"
-            "**Technologies to detect:**\n"
-            "1. **Google Ads** – gtag/aw-*, googleadservices.com, doubleclick, googletagmanager.com/gtag, conversion_id, gclid, dc.js.\n"
-            "2. **Meta Ads** – fbq(, fbevents.js, facebook.net, connect.facebook.net, Meta Pixel.\n"
-            "3. **LinkedIn Ads** – li.lms-analytics, lintracker, linkedin.com/li.lms-analytics, snap.licdn.com.\n\n"
-            "Return a single JSON object with exactly these three boolean fields:\n"
-            "{\n"
-            "  \"google_ads\": boolean,\n"
-            "  \"meta_ads\": boolean,\n"
-            "  \"linkedin_ads\": boolean\n"
-            "}\n\n"
-            "Output only the JSON object, with no prose or explanation outside of it."
-        )
-    return system_text, user_text
+def _truncate_html_for_ai(html_snippet: Optional[str]) -> Optional[str]:
+    """Return the first _FETCHED_HTML_MAX_CHARS_FOR_AI chars of HTML for use in AI prompts; no truncation for detection."""
+    if not html_snippet:
+        return None
+    if len(html_snippet) <= _FETCHED_HTML_MAX_CHARS_FOR_AI:
+        return html_snippet
+    return html_snippet[:_FETCHED_HTML_MAX_CHARS_FOR_AI] + "\n\n[... truncated for AI context ...]"
 
 
 def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
@@ -789,11 +773,11 @@ def _build_ad_agency_prompts_primary(user_data: Any) -> Tuple[str, str]:
 def _build_ad_agency_prompts_ecommerce(
     user_data: Any,
     website_url: Optional[str] = None,
-    html_snippet: Optional[str] = None,
 ) -> Tuple[str, str]:
     """Build system instruction and user prompt for ecommerce-specific fields only.
 
-    If html_snippet is provided, the model will use the page source as the primary source for extraction.
+    Uses direct inquiry: model is given the URL and seed hints and should use Google Search
+    and website exploration to answer. No raw HTML is sent to the model.
     Returns (system_instruction_text, user_prompt_text).
     """
     # Normalize input into a text block to embed verbatim for analysis
@@ -807,30 +791,19 @@ def _build_ad_agency_prompts_ecommerce(
             raise ValueError("Unsupported 'data' format. Provide a string or JSON-serializable object.")
 
     system_text = (
-        "You are an elite advertising agency assistant. Your job is to extract ecommerce-specific information "
-        "from the provided data (page source and/or seed hints). Use the page HTML when provided as the primary "
-        "source: look for platform in script/footer, payment/shipping in page text or footer, categories in nav. "
-        "Do not fabricate; use null or [] when data is unavailable."
+        "You are an elite advertising agency assistant. Your job is to find ecommerce-specific information "
+        "about a company by visiting their website and using Google Search. Use the company URL and seed hints "
+        "to explore the site and run targeted searches. Do not fabricate; use null or [] when data is unavailable."
     )
 
-    if html_snippet and website_url:
-        intro = (
-            "**Primary source:** The raw HTML of the company's website is provided below. Use it to extract ecommerce data. "
-            "Search the HTML for: ecommerce platform (Shopify, WooCommerce, etc. in script/footer), website platform (WordPress, Wix in meta/source), "
-            "payment methods (Visa, PayPal, etc. in footer/checkout), shipping methods (text or links), top-level product categories (nav menus, links). "
-            "Also use Google Search with the seed hints for catalogue size, mobile app, subscription, international shipping if not visible in the HTML.\n\n"
-            "**URL:** " + website_url + "\n\n"
-            "**Page HTML/source (extract from this):**\n"
-            "---BEGIN PAGE SOURCE---\n" + html_snippet + "\n---END PAGE SOURCE---\n\n"
-            "**Seed hints (for search when needed):**\n" + data_block + "\n\n"
-        )
-    else:
-        intro = (
-            "Your task is to find ecommerce-specific information about a company based on the provided seed hints. "
-            "Use Google Search and website exploration."
-            + ("\n\n**Company website (inspect this URL):** " + website_url if website_url else "")
-            + "\n\n**SEARCH STRATEGY:** Use multiple targeted Google Search queries and website exploration:\n\n"
-        )
+    intro = (
+        "Visit the company's website and use Google Search to find the following ecommerce information. "
+        "Use the URL below as the primary source; run targeted searches (e.g. '[company] shipping options', "
+        "'[company] payment methods') when needed.\n\n"
+        + ("**Company website (visit and inspect):** " + website_url + "\n\n" if website_url else "")
+        + "**Seed hints (company name, domain, etc.):**\n" + data_block + "\n\n"
+        + "**SEARCH STRATEGY:** Use multiple targeted Google Search queries and direct website inspection:\n\n"
+    )
 
     # Request structured JSON focused only on ecommerce-specific fields
     user_text = (
