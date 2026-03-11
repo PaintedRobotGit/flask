@@ -115,6 +115,11 @@ def validate_ai_payload():
         if website_url:
             try:
                 html_snippet = _fetch_page_html(website_url)
+                # Tag Manager: server-side detection from HTML (more reliable than AI)
+                parsed["tag_manager"] = _detect_tag_manager_in_html(html_snippet) if html_snippet else False
+                # Website/ecommerce platform: server-side detection from HTML (overrides AI after ecommerce merge)
+                detected_website_platform = _detect_website_platform_in_html(html_snippet) if html_snippet else None
+                detected_ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet) if html_snippet else None
                 system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url, html_snippet)
                 completion_tech, _ = _call_gemini_generate_content(
                     api_key=gemini_key,
@@ -129,7 +134,6 @@ def validate_ai_payload():
                     parsed["google_ads"] = bool(parsed_tech.get("google_ads"))
                     parsed["meta_ads"] = bool(parsed_tech.get("meta_ads"))
                     parsed["linkedin_ads"] = bool(parsed_tech.get("linkedin_ads"))
-                    parsed["tag_manager"] = bool(parsed_tech.get("tag_manager"))
             except (requests.HTTPError, requests.RequestException, ValueError):
                 pass  # keep defaults false
 
@@ -180,6 +184,11 @@ def validate_ai_payload():
                         "raw_output": completion_text_ecom if "completion_text_ecom" in locals() else None,
                         "gemini_response": vendor_response_ecom,
                     }
+            # Apply server-side platform detection when we have a match (even if ecommerce call failed)
+            if detected_website_platform is not None:
+                parsed["website_platform"] = detected_website_platform
+            if detected_ecommerce_platform is not None:
+                parsed["ecommerce_platform"] = detected_ecommerce_platform
 
         return jsonify({
             "status": "ok",
@@ -233,6 +242,11 @@ def validate_ai_payload():
             if website_url:
                 try:
                     html_snippet = _fetch_page_html(website_url)
+                    # Tag Manager: server-side detection from HTML (more reliable than AI)
+                    parsed["tag_manager"] = _detect_tag_manager_in_html(html_snippet) if html_snippet else False
+                    # Website/ecommerce platform: server-side detection from HTML
+                    detected_website_platform = _detect_website_platform_in_html(html_snippet) if html_snippet else None
+                    detected_ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet) if html_snippet else None
                     system_instruction_tech, user_prompt_tech = _build_ad_agency_prompts_website_tech(website_url, html_snippet)
                     completion_tech, _ = _call_gemini_generate_content(
                         api_key=gemini_api_key,
@@ -247,7 +261,6 @@ def validate_ai_payload():
                         parsed["google_ads"] = bool(parsed_tech.get("google_ads"))
                         parsed["meta_ads"] = bool(parsed_tech.get("meta_ads"))
                         parsed["linkedin_ads"] = bool(parsed_tech.get("linkedin_ads"))
-                        parsed["tag_manager"] = bool(parsed_tech.get("tag_manager"))
                 except (requests.HTTPError, requests.RequestException, ValueError):
                     pass  # keep defaults false
 
@@ -270,6 +283,11 @@ def validate_ai_payload():
                         _normalize_ecommerce_output(parsed)
                 except (requests.HTTPError, requests.RequestException, ValueError):
                     pass
+                # Apply server-side platform detection when we have a match
+                if detected_website_platform is not None:
+                    parsed["website_platform"] = detected_website_platform
+                if detected_ecommerce_platform is not None:
+                    parsed["ecommerce_platform"] = detected_ecommerce_platform
 
             result_body: Dict[str, Any] = {
                 "status": "ok",
@@ -435,6 +453,89 @@ def _get_website_url_for_calls(parsed_primary: Dict[str, Any], user_data: Any) -
 # Max characters of fetched HTML to send to the model (keeps context within limits; head + early body usually has the tags)
 _FETCHED_HTML_MAX_CHARS = 70000
 
+# Common patterns for Google Tag Manager / gtag in page source (used for server-side detection)
+_TAG_MANAGER_PATTERNS = (
+    "googletagmanager.com/gtag",
+    "googletagmanager.com/gtm.js",
+    "googletagmanager.com/gtm.",
+    "GTM-",
+    "Google tag (gtag.js)",
+    "Google Tag Manager",
+)
+
+
+def _detect_tag_manager_in_html(html: str) -> bool:
+    """Return True if the HTML contains common Google Tag Manager / gtag.js indicators. Case-insensitive."""
+    if not html or not isinstance(html, str):
+        return False
+    lower = html.lower()
+    return any(
+        p.lower() in lower
+        for p in _TAG_MANAGER_PATTERNS
+    )
+
+
+# (pattern, platform_name) — first match wins. Order by specificity / reliability.
+_WEBSITE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
+    ("wp-content", "WordPress"),
+    ("wp-includes", "WordPress"),
+    ("wp-json", "WordPress"),
+    ("/wp-admin/", "WordPress"),
+    ("wixstatic.com", "Wix"),
+    ("wix.com", "Wix"),
+    ("wixsite.com", "Wix"),
+    ("squarespace.com", "Squarespace"),
+    ("static1.squarespace.com", "Squarespace"),
+    ("drupal.org", "Drupal"),
+    ("sites/default/files", "Drupal"),
+    ("/media/jui/", "Joomla"),
+    ("joomla", "Joomla"),
+    ("webflow.com", "Webflow"),
+    ("cdn.webflow.com", "Webflow"),
+    ("squarespace", "Squarespace"),
+    ("drupal", "Drupal"),
+)
+_ECOMMERCE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
+    ("cdn.shopify.com", "Shopify"),
+    ("myshopify.com", "Shopify"),
+    ("shopify.theme", "Shopify"),
+    ("shopify.com/shopify", "Shopify"),
+    ("wp-content/plugins/woocommerce", "WooCommerce"),
+    ("woocommerce", "WooCommerce"),
+    ("wc-api", "WooCommerce"),
+    ("mage/", "Magento"),
+    ("magento", "Magento"),
+    ("static/version", "Magento"),
+    ("cdn.bigcommerce.com", "BigCommerce"),
+    ("mybigcommerce.com", "BigCommerce"),
+    ("bigcommerce.com", "BigCommerce"),
+    ("demandware.net", "Salesforce Commerce Cloud"),
+    ("commercecloud.salesforce.com", "Salesforce Commerce Cloud"),
+    ("demandware", "Salesforce Commerce Cloud"),
+)
+
+
+def _detect_website_platform_in_html(html: str) -> Optional[str]:
+    """Return detected website/CMS platform name from HTML (e.g. WordPress, Wix), or None. Case-insensitive."""
+    if not html or not isinstance(html, str):
+        return None
+    lower = html.lower()
+    for pattern, name in _WEBSITE_PLATFORM_PATTERNS:
+        if pattern.lower() in lower:
+            return name
+    return None
+
+
+def _detect_ecommerce_platform_in_html(html: str) -> Optional[str]:
+    """Return detected ecommerce platform name from HTML (e.g. Shopify, WooCommerce), or None. Case-insensitive."""
+    if not html or not isinstance(html, str):
+        return None
+    lower = html.lower()
+    for pattern, name in _ECOMMERCE_PLATFORM_PATTERNS:
+        if pattern.lower() in lower:
+            return name
+    return None
+
 
 def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
     """Fetch the raw HTML of a URL and return the first _FETCHED_HTML_MAX_CHARS characters, or None on failure."""
@@ -459,60 +560,55 @@ def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
 
 
 def _build_ad_agency_prompts_website_tech(website_url: str, html_snippet: Optional[str] = None) -> Tuple[str, str]:
-    """Build system instruction and user prompt for website technology detection (four booleans only).
+    """Build system instruction and user prompt for ad-platform detection (three booleans only).
 
-    If html_snippet is provided, the model will use it as the primary source for detection instead of visiting the URL.
+    Tag Manager is detected server-side via _detect_tag_manager_in_html; it is not asked of the AI.
     Returns (system_instruction_text, user_prompt_text).
-    Output schema: google_ads, meta_ads, linkedin_ads, tag_manager (all boolean).
+    Output schema: google_ads, meta_ads, linkedin_ads (all boolean).
     """
     system_text = (
         "You are a technical analyst. Your only job is to determine whether a website uses specific "
-        "advertising and tag-management technologies by inspecting the page source (HTML/script content). "
-        "You will be given either the raw HTML of the page or a URL. Search the provided content for the "
-        "exact script URLs, identifiers, and code patterns listed. Return true if you find evidence; "
-        "return false only when you have searched and found no such indicators. Do not guess from company type."
+        "advertising technologies (Google Ads, Meta/Facebook Ads, LinkedIn Ads) by inspecting the page source. "
+        "Search the provided content for the exact script URLs and code patterns listed. "
+        "Return true if you find evidence; return false only when you have searched and found no such indicators. "
+        "Do not guess from company type."
     )
     if html_snippet:
         user_text = (
             "Below is the raw HTML (and script content) of the website's page. Use it as the primary source to detect "
-            "each technology. Search for the exact strings and patterns described—do not rely on visiting the URL.\n\n"
+            "each ad technology. Search for the exact strings and patterns described.\n\n"
             "**URL (for reference):** " + website_url + "\n\n"
-            "**Technologies to detect:**\n"
+            "**Technologies to detect (set true only if you find evidence in the source):**\n"
             "1. **Google Ads** – Set true if you find ANY of: gtag or gtag/js, aw- (e.g. aw-123456789), googleadservices.com, "
-            "doubleclick, googletagmanager.com/gtag, conversion_id, gclid, google.com/pagead/, dc.js, or 'Google Ads' in script/dataLayer.\n"
+            "doubleclick, googletagmanager.com/gtag with Google Ads, conversion_id, gclid, google.com/pagead/, dc.js, or 'Google Ads' in script/dataLayer.\n"
             "2. **Meta Ads (Facebook/Instagram)** – Set true if you find: fbq(, fbevents.js, facebook.net, connect.facebook.net, "
             "fbevents, Meta Pixel, or 'facebook' pixel in script/source.\n"
             "3. **LinkedIn Ads** – Set true if you find: li.lms-analytics, lintracker, linkedin.com/li.lms-analytics, "
-            "snap.licdn.com, LinkedIn Insight Tag, or 'linkedin' tracking in script/source.\n"
-            "4. **Tag Manager (Google Tag Manager)** – Set true if you find: googletagmanager.com/gtm.js, GTM- (container ID), "
-            "dataLayer, or gtm.js in script src.\n\n"
+            "snap.licdn.com, LinkedIn Insight Tag, or 'linkedin' tracking in script/source.\n\n"
             "**Page HTML/source (search below for the patterns above):**\n"
             "---BEGIN PAGE SOURCE---\n" + html_snippet + "\n---END PAGE SOURCE---\n\n"
-            "Return a single JSON object with exactly these four boolean fields:\n"
+            "Return a single JSON object with exactly these three boolean fields:\n"
             "{\n"
             "  \"google_ads\": boolean,\n"
             "  \"meta_ads\": boolean,\n"
-            "  \"linkedin_ads\": boolean,\n"
-            "  \"tag_manager\": boolean\n"
+            "  \"linkedin_ads\": boolean\n"
             "}\n\n"
             "Output only the JSON object, with no prose or explanation outside of it."
         )
     else:
         user_text = (
-            "Visit this website URL and inspect the page source (HTML, script tags, dataLayer). "
+            "Visit this website URL and inspect the page source (HTML, script tags). "
             "For each technology below, set true if you find evidence; set false only if you find no indicators.\n\n"
             "**URL to inspect:** " + website_url + "\n\n"
             "**Technologies to detect:**\n"
             "1. **Google Ads** – gtag/aw-*, googleadservices.com, doubleclick, googletagmanager.com/gtag, conversion_id, gclid, dc.js.\n"
             "2. **Meta Ads** – fbq(, fbevents.js, facebook.net, connect.facebook.net, Meta Pixel.\n"
-            "3. **LinkedIn Ads** – li.lms-analytics, lintracker, linkedin.com/li.lms-analytics, snap.licdn.com.\n"
-            "4. **Tag Manager** – googletagmanager.com/gtm.js, GTM-XXXXX, dataLayer.\n\n"
-            "Return a single JSON object with exactly these four boolean fields:\n"
+            "3. **LinkedIn Ads** – li.lms-analytics, lintracker, linkedin.com/li.lms-analytics, snap.licdn.com.\n\n"
+            "Return a single JSON object with exactly these three boolean fields:\n"
             "{\n"
             "  \"google_ads\": boolean,\n"
             "  \"meta_ads\": boolean,\n"
-            "  \"linkedin_ads\": boolean,\n"
-            "  \"tag_manager\": boolean\n"
+            "  \"linkedin_ads\": boolean\n"
             "}\n\n"
             "Output only the JSON object, with no prose or explanation outside of it."
         )
