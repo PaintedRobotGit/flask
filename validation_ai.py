@@ -130,6 +130,8 @@ def validate_ai_payload():
             logger.warning("validation_ai: no website_url (known_domains empty and no domain in data); skipping tech and ecommerce calls")
         if website_url:
             logger.info("validation_ai: website_url=%s fetching HTML", website_url)
+            detected_website_platform = None
+            detected_ecommerce_platform = None
             try:
                 html_snippet = _fetch_page_html(website_url)
                 if html_snippet:
@@ -146,6 +148,8 @@ def validate_ai_payload():
                 detected_website_platform = _detect_website_platform_in_html(html_snippet) if html_snippet else None
                 detected_ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet) if html_snippet else None
                 logger.info("validation_ai: platform detection from HTML website=%s ecommerce=%s", detected_website_platform, detected_ecommerce_platform)
+            except (requests.HTTPError, requests.RequestException, ValueError):
+                pass  # keep ad/tag defaults false, platform detection None
 
             # Ecommerce call: direct inquiry (URL + seed hints only; no HTML to AI)
             vendor_response_ecom = None
