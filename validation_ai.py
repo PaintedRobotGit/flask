@@ -11,6 +11,14 @@ import os
 validation_ai_bp = Blueprint("validation_ai", __name__)
 logger = logging.getLogger("validation_ai")
 
+# Ensure logs appear in Railway/server stdout (default config often hides INFO)
+if not logger.handlers:
+    _h = logging.StreamHandler()
+    _h.setLevel(logging.INFO)
+    logger.setLevel(logging.INFO)
+    logger.addHandler(_h)
+logger.setLevel(logging.INFO)
+
 
 @validation_ai_bp.route("/validation_ai", methods=["POST"])
 def validate_ai_payload():
@@ -130,6 +138,7 @@ def validate_ai_payload():
                     logger.warning("validation_ai: HTML fetch failed or empty for %s", website_url)
                 # Tag Manager: server-side detection from HTML (more reliable than AI)
                 parsed["tag_manager"] = _detect_tag_manager_in_html(html_snippet) if html_snippet else False
+                logger.info("validation_ai: tag_manager from HTML=%s (html_len=%s)", parsed["tag_manager"], len(html_snippet) if html_snippet else 0)
                 # Website/ecommerce platform: server-side detection from HTML (overrides AI after ecommerce merge)
                 detected_website_platform = _detect_website_platform_in_html(html_snippet) if html_snippet else None
                 detected_ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet) if html_snippet else None
@@ -270,8 +279,13 @@ def validate_ai_payload():
                 logger.info("validation_ai: [%s] website_url=%s", record_id_value, website_url)
                 try:
                     html_snippet = _fetch_page_html(website_url)
+                    if html_snippet:
+                        logger.info("validation_ai: [%s] HTML fetched len=%s", record_id_value, len(html_snippet))
+                    else:
+                        logger.warning("validation_ai: [%s] HTML fetch failed or empty for %s", record_id_value, website_url)
                     # Tag Manager: server-side detection from HTML (more reliable than AI)
                     parsed["tag_manager"] = _detect_tag_manager_in_html(html_snippet) if html_snippet else False
+                    logger.info("validation_ai: [%s] tag_manager from HTML=%s (html_len=%s)", record_id_value, parsed["tag_manager"], len(html_snippet) if html_snippet else 0)
                     # Website/ecommerce platform: server-side detection from HTML
                     detected_website_platform = _detect_website_platform_in_html(html_snippet) if html_snippet else None
                     detected_ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet) if html_snippet else None
