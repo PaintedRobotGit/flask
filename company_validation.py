@@ -135,6 +135,30 @@ _WEBSITE_PLATFORM_SELF_ID: Tuple[Tuple[str, str], ...] = (
     ("generator.*wordpress", "WordPress"),
     ("powered by wix", "Wix"),
     ("powered by webflow", "Webflow"),
+    ("powered by weebly", "Weebly"),
+    ("powered by joomla", "Joomla"),
+    ("generator.*joomla", "Joomla"),
+    ("powered by drupal", "Drupal"),
+    ("generator.*drupal", "Drupal"),
+    ("powered by prestashop", "PrestaShop"),
+    ("powered by godaddy", "GoDaddy"),
+)
+# Custom / JS framework markers first (specific so we don't misclassify as a CMS).
+_WEBSITE_PLATFORM_FRAMEWORK: Tuple[Tuple[str, str], ...] = (
+    ("__NEXT_DATA__", "Next.js"),
+    ("/_next/static/", "Next.js"),
+    ("__NUXT__", "Nuxt"),
+    ("__nuxt", "Nuxt"),
+    ("___gatsby", "Gatsby"),
+    ("gatsby-react", "Gatsby"),
+    ("data-svelte", "Svelte"),
+    ("__svelte", "Svelte"),
+    ("data-v-", "Vue"),  # Vue scoped styles
+    ("__VUE__", "Vue"),
+    ("data-reactroot", "React"),
+    ("data-reactid", "React"),
+    ("react-dom", "React"),
+    ("_reactRootContainer", "React"),
 )
 # CMS/site-builder markers (only searched in document head to avoid third-party script URL false positives).
 _WEBSITE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
@@ -148,12 +172,22 @@ _WEBSITE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
     ("squarespace.com", "Squarespace"),
     ("static1.squarespace.com", "Squarespace"),
     ("static.squarespace.com", "Squarespace"),
+    ("weebly.com", "Weebly"),
+    ("weebly.cloud", "Weebly"),
+    ("cdn.weebly.com", "Weebly"),
     ("drupal.org", "Drupal"),
-    ("sites/default/files/", "Drupal"),
-    ("/sites/default/", "Drupal"),
+    ("/core/misc/drupal", "Drupal"),  # Drupal core JS path
+    ("data-drupal-selector", "Drupal"),
+    ("core/assets/vendor", "Drupal"),  # Drupal 8+ core assets
     ("/media/jui/", "Joomla"),
+    ("joomla.org", "Joomla"),
     ("webflow.com", "Webflow"),
     ("cdn.webflow.com", "Webflow"),
+    ("prestashop", "PrestaShop"),
+    ("tistory.com", "Tistory"),
+    ("tistory.co.kr", "Tistory"),
+    ("secureserver.net", "GoDaddy"),  # GoDaddy hosting/builder assets
+    ("godaddy.com/websites", "GoDaddy"),
 )
 
 # Ecommerce self-identification (only in document head).
@@ -233,7 +267,11 @@ def _detect_website_platform_in_html(html: str) -> Optional[str]:
                 return name
         elif pattern.lower() in lower:
             return name
-    # 2) Structural markers (same-origin paths / same-origin script URLs live in head).
+    # 2) Custom / JS framework markers (Next.js, Nuxt, Vue, React, Gatsby, Svelte).
+    for pattern, name in _WEBSITE_PLATFORM_FRAMEWORK:
+        if pattern.lower() in lower:
+            return name
+    # 3) CMS/site-builder structural markers.
     for pattern, name in _WEBSITE_PLATFORM_PATTERNS:
         if pattern.lower() in lower:
             return name
