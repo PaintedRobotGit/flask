@@ -413,17 +413,15 @@ def _build_ad_agency_prompts_ecommerce(
         "   - Search for '[company name] product catalog size' or '[company name] total products'\n"
         "   - Explore the company's website - product sitemaps, category pages, 'shop all' pages\n\n"
         "**2. Product Categories Count (product_categories_count):** Count ALL top-level product categories (menus, nav, filters). Do NOT count subcategories or non-product pages.\n\n"
-        "**3. Ecommerce Platform (ecommerce_platform):** Only return if you find DEFINITIVE evidence (platform URLs, 'Powered by', source code). Do NOT guess.\n\n"
-        "**4. Website Platform (website_platform):** CMS/site builder if identifiable (WordPress, Wix, etc.). Distinct from ecommerce_platform.\n\n"
-        "**5. Shipping Methods (shipping_methods):** From shipping/FAQ pages or checkout.\n\n"
-        "**6. Payment Methods (payment_methods):** From checkout or payment info.\n\n"
-        "**7. Mobile App (has_mobile_app):** true/false/null from app store or site.\n\n"
-        "**8. Subscription Model (has_subscription_model):** subscription/recurring options.\n\n"
-        "**9. International Shipping (international_shipping):** true/false/null.\n\n"
+        "**3. Shipping Methods (shipping_methods):** From shipping/FAQ pages or checkout.\n\n"
+        "**4. Payment Methods (payment_methods):** From checkout or payment info.\n\n"
+        "**5. Mobile App (has_mobile_app):** true/false/null from app store or site.\n\n"
+        "**6. Subscription Model (has_subscription_model):** subscription/recurring options.\n\n"
+        "**7. International Shipping (international_shipping):** true/false/null.\n\n"
+        "Do NOT include website_platform or ecommerce_platform — those are determined from the page HTML only.\n\n"
         "Return a single JSON object with: catalogue_size (number|null), product_categories_count (number|null), "
-        "ecommerce_platform (string|null), website_platform (string|null), shipping_methods (string[]), "
-        "payment_methods (string[]), has_mobile_app (boolean|null), has_subscription_model (boolean|null), "
-        "international_shipping (boolean|null). Output only the JSON object, no prose.\n\n"
+        "shipping_methods (string[]), payment_methods (string[]), has_mobile_app (boolean|null), "
+        "has_subscription_model (boolean|null), international_shipping (boolean|null). Output only the JSON object, no prose.\n\n"
         f"Seed hints:\n{data_block}"
     )
     return system_text, user_text
@@ -511,6 +509,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
         return {"status": "ok", **result}
 
     result["html_fetched"] = True
+    # Website and ecommerce platform are guaranteed from HTML only (never from AI).
     result["tech_stack"]["website_platform"] = _detect_website_platform_in_html(html_snippet)
     result["tech_stack"]["ecommerce_platform"] = _detect_ecommerce_platform_in_html(html_snippet)
     result["checkboxes"]["tag_manager"] = _detect_tag_manager_in_html(html_snippet)
@@ -545,11 +544,9 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
                     ecom_parsed = _parse_strict_json_object(completion_text)
                     _ensure_ecommerce_keys(ecom_parsed)
                     _normalize_ecommerce_output(ecom_parsed)
-                    # HTML detection wins: never let AI override platform when we detected from the page.
-                    if result["tech_stack"]["website_platform"] is not None:
-                        ecom_parsed["website_platform"] = result["tech_stack"]["website_platform"]
-                    if result["tech_stack"]["ecommerce_platform"] is not None:
-                        ecom_parsed["ecommerce_platform"] = result["tech_stack"]["ecommerce_platform"]
+                    # Website and ecommerce platform are guaranteed from HTML only (AI is not asked for these).
+                    ecom_parsed["website_platform"] = result["tech_stack"]["website_platform"]
+                    ecom_parsed["ecommerce_platform"] = result["tech_stack"]["ecommerce_platform"]
                     result["ecommerce_info"] = ecom_parsed
                     logger.info(
                         "company_validation: ecommerce_info catalogue_size=%s has_subscription=%s",
