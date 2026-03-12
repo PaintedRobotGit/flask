@@ -5,7 +5,7 @@ Fully self-contained — no dependency on validation_ai.
 validation_ai owns Marketing Insights / Pitch Data; this module owns hard boolean/info returns.
 """
 from flask import Blueprint, request, jsonify
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import re
 import json
 import logging
@@ -13,6 +13,7 @@ import time
 import os
 import requests
 import threading
+from urllib.parse import urlparse, urlunparse
 
 company_validation_bp = Blueprint("company_validation", __name__)
 
@@ -51,6 +52,47 @@ def _get_website_url_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     return None
 
 
+# Common ecommerce subdomains to try when main page has no ecommerce platform detected.
+_ECOMMERCE_SUBDOMAINS_TO_TRY: Tuple[str, ...] = ("shop", "store", "buy")
+
+# Shorter timeout and smaller read for subdomain checks so we don't slow down the flow.
+_SUBDOMAIN_FETCH_TIMEOUT = 8
+_SUBDOMAIN_HTML_MAX_CHARS = 500_000
+
+
+def _subdomain_urls_from_main_url(main_url: str) -> List[str]:
+    """Return a list of URLs for common ecommerce subdomains (e.g. shop.example.com, store.example.com)."""
+    try:
+        parsed = urlparse(main_url)
+        host = (parsed.netloc or "").strip().lower()
+        if not host:
+            return []
+        # Get base host: www.example.com -> example.com; app.example.com -> example.com
+        if host.startswith("www."):
+            base_host = host[4:]
+        else:
+            parts = host.split(".")
+            if len(parts) >= 2:
+                base_host = ".".join(parts[-2:])
+            else:
+                base_host = host
+        if not base_host:
+            return []
+        scheme = parsed.scheme or "https"
+        path = parsed.path or "/"
+        query = parsed.query
+        fragment = parsed.fragment
+        out = []
+        for sub in _ECOMMERCE_SUBDOMAINS_TO_TRY:
+            new_netloc = sub + "." + base_host
+            new_path = path if path != "/" else "/"
+            new_url = urlunparse((scheme, new_netloc, new_path, "", query, fragment))
+            out.append(new_url)
+        return out
+    except Exception:
+        return []
+
+
 # ----- HTML fetch -----
 # Use full response for detection (no truncation) so we don't miss GTM/gtag or other scripts later in the page.
 _FETCHED_HTML_MAX_CHARS = 5_000_000
@@ -59,10 +101,15 @@ _FETCH_USER_AGENT = (
 )
 
 
-def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
-    """Fetch the raw HTML of a URL; return up to _FETCHED_HTML_MAX_CHARS (full page for detection)."""
+def _fetch_page_html(
+    url: str,
+    timeout_seconds: int = 15,
+    max_chars: Optional[int] = None,
+) -> Optional[str]:
+    """Fetch the raw HTML of a URL; return up to max_chars (default _FETCHED_HTML_MAX_CHARS)."""
     if not url or not url.strip().startswith("http"):
         return None
+    limit = max_chars if max_chars is not None else _FETCHED_HTML_MAX_CHARS
     try:
         resp = requests.get(
             url,
@@ -78,8 +125,8 @@ def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
         text = resp.text
         if not text:
             return None
-        if len(text) > _FETCHED_HTML_MAX_CHARS:
-            text = text[:_FETCHED_HTML_MAX_CHARS] + "\n\n[... HTML truncated ...]"
+        if len(text) > limit:
+            text = text[:limit] + "\n\n[... HTML truncated ...]"
         return text
     except Exception:
         return None
@@ -479,6 +526,21 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
     result["checkboxes"]["google_ads"] = _detect_google_ads_in_html(html_snippet)
     result["checkboxes"]["meta_ads"] = _detect_meta_ads_in_html(html_snippet)
     result["checkboxes"]["linkedin_ads"] = _detect_linkedin_ads_in_html(html_snippet)
+
+    # If no ecommerce platform on main page, try common subdomains (shop., store., buy.)
+    if result["tech_stack"]["ecommerce_platform"] is None:
+        for sub_url in _subdomain_urls_from_main_url(website_url):
+            sub_html = _fetch_page_html(
+                sub_url,
+                timeout_seconds=_SUBDOMAIN_FETCH_TIMEOUT,
+                max_chars=_SUBDOMAIN_HTML_MAX_CHARS,
+            )
+            if sub_html:
+                detected = _detect_ecommerce_platform_in_html(sub_html)
+                if detected is not None:
+                    result["tech_stack"]["ecommerce_platform"] = detected
+                    logger.info("company_validation: ecommerce_platform %s found on subdomain %s", detected, sub_url)
+                    break
 
     logger.info("company_validation: tech_stack=%s checkboxes=%s", result["tech_stack"], result["checkboxes"])
 
