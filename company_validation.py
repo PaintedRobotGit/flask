@@ -52,14 +52,15 @@ def _get_website_url_from_payload(payload: Dict[str, Any]) -> Optional[str]:
 
 
 # ----- HTML fetch -----
-_FETCHED_HTML_MAX_CHARS = 500000
+# Use full response for detection (no truncation) so we don't miss GTM/gtag or other scripts later in the page.
+_FETCHED_HTML_MAX_CHARS = 5_000_000
 _FETCH_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
 
 
 def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
-    """Fetch the raw HTML of a URL; return first _FETCHED_HTML_MAX_CHARS chars or None on failure."""
+    """Fetch the raw HTML of a URL; return up to _FETCHED_HTML_MAX_CHARS (full page for detection)."""
     if not url or not url.strip().startswith("http"):
         return None
     try:
@@ -85,14 +86,15 @@ def _fetch_page_html(url: str, timeout_seconds: int = 15) -> Optional[str]:
 
 
 # ----- Ad/tag and platform detection (patterns + functions) -----
+# Explicit GTM/gtag script and container indicators (order: most specific first).
 _TAG_MANAGER_PATTERNS = (
-    "googletagmanager.com/gtag/js",
-    "googletagmanager.com/gtag",
-    "googletagmanager.com/gtm.js",
-    "googletagmanager.com/gtm.",
-    "googletagmanager.com/ns.html",
-    "googletagmanager.com",
-    "GTM-",
+    "googletagmanager.com/gtag/js",   # gtag.js script src (e.g. id=G-... or id=AW-...)
+    "googletagmanager.com/gtm.js",    # GTM container script
+    "googletagmanager.com/gtm.",      # GTM container (e.g. gtm.js?id=GTM-XXX)
+    "googletagmanager.com/ns.html",   # GTM noscript iframe
+    "googletagmanager.com/gtag",      # gtag config/call
+    "googletagmanager.com",           # any GTM domain reference
+    "GTM-",                           # container ID in script
     "Google tag (gtag.js)",
     "Google Tag Manager",
 )
@@ -122,42 +124,44 @@ _LINKEDIN_ADS_PATTERNS = (
     "linkedin insight tag",
 )
 
+# Explicit CMS/site-builder indicators only (avoid generic substrings that cause false positives).
 _WEBSITE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
-    ("wp-content", "WordPress"),
-    ("wp-includes", "WordPress"),
-    ("wp-json", "WordPress"),
+    ("/wp-content/", "WordPress"),
+    ("/wp-includes/", "WordPress"),
+    ("/wp-json/", "WordPress"),
     ("/wp-admin/", "WordPress"),
     ("wixstatic.com", "Wix"),
-    ("wix.com", "Wix"),
+    ("parastorage.com", "Wix"),  # Wix CDN
     ("wixsite.com", "Wix"),
     ("squarespace.com", "Squarespace"),
     ("static1.squarespace.com", "Squarespace"),
+    ("static.squarespace.com", "Squarespace"),
     ("drupal.org", "Drupal"),
-    ("sites/default/files", "Drupal"),
+    ("sites/default/files/", "Drupal"),
+    ("/sites/default/", "Drupal"),
     ("/media/jui/", "Joomla"),
-    ("joomla", "Joomla"),
     ("webflow.com", "Webflow"),
     ("cdn.webflow.com", "Webflow"),
-    ("squarespace", "Squarespace"),
-    ("drupal", "Drupal"),
 )
 
+# Explicit ecommerce platform indicators only (no generic substrings; "static/version" removed - too many false positives).
 _ECOMMERCE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
     ("cdn.shopify.com", "Shopify"),
     ("myshopify.com", "Shopify"),
     ("shopify.theme", "Shopify"),
     ("shopify.com/shopify", "Shopify"),
+    ("/plugins/woocommerce/", "WooCommerce"),
     ("wp-content/plugins/woocommerce", "WooCommerce"),
-    ("woocommerce", "WooCommerce"),
+    ("/woocommerce/", "WooCommerce"),
     ("wc-api", "WooCommerce"),
-    ("magento", "Magento"),
-    ("static/version", "Magento"),
+    ("/static/frontend/Magento/", "Magento"),
+    ("magento/theme", "Magento"),
+    ("Magento_", "Magento"),
     ("cdn.bigcommerce.com", "BigCommerce"),
     ("mybigcommerce.com", "BigCommerce"),
     ("bigcommerce.com", "BigCommerce"),
     ("demandware.net", "Salesforce Commerce Cloud"),
     ("commercecloud.salesforce.com", "Salesforce Commerce Cloud"),
-    ("demandware", "Salesforce Commerce Cloud"),
 )
 
 
@@ -419,23 +423,22 @@ def _normalize_ecommerce_output(parsed: Dict[str, Any]) -> None:
         parsed["catalogue_size"] = int(cs)
 
 
-# ----- Route -----
-@company_validation_bp.route("/company_validation", methods=["POST"])
-def company_validation():
+def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Parse website HTML for tech stack, ecommerce stack, and ad/tag checkboxes.
-    Optionally run AI for ecommerce fields (catalogue, subscription, shipping, etc.).
+    Run full company validation (HTML fetch, tech/checkboxes detection, optional ecommerce AI).
+    Returns the result dict. Used by the background worker; does not POST to Zoho.
     """
-    payload = request.get_json(silent=True) or {}
     website_url = _get_website_url_from_payload(payload)
     if not website_url:
-        return (
-            jsonify({
-                "status": "error",
-                "message": "Missing website URL. Provide 'website_url' or 'url' in payload, or 'data' with website/domain keys.",
-            }),
-            400,
-        )
+        return {
+            "status": "error",
+            "message": "Missing website URL. Provide 'website_url' or 'url' in payload, or 'data' with website/domain keys.",
+            "website_url": None,
+            "tech_stack": {"website_platform": None, "ecommerce_platform": None},
+            "checkboxes": {"tag_manager": False, "google_ads": False, "meta_ads": False, "linkedin_ads": False},
+            "ecommerce_info": None,
+            "html_fetched": False,
+        }
 
     gemini_key = (str(payload.get("Gemini_Key", "")).strip() or os.getenv("GEMINI_KEY", "").strip())
     run_ecommerce_ai = bool(payload.get("run_ecommerce_ai", True))
@@ -450,7 +453,7 @@ def company_validation():
     if connect_timeout_seconds < 10:
         connect_timeout_seconds = 10
 
-    result = {
+    result: Dict[str, Any] = {
         "website_url": website_url,
         "tech_stack": {"website_platform": None, "ecommerce_platform": None},
         "checkboxes": {
@@ -465,12 +468,9 @@ def company_validation():
     html_snippet = _fetch_page_html(website_url, timeout_seconds=timeout_seconds)
     if not html_snippet:
         logger.warning("company_validation: HTML fetch failed or empty for %s", website_url)
-        return jsonify({
-            "status": "ok",
-            **result,
-            "html_fetched": False,
-            "message": "Could not fetch page HTML.",
-        })
+        result["html_fetched"] = False
+        result["message"] = "Could not fetch page HTML."
+        return {"status": "ok", **result}
 
     result["html_fetched"] = True
     result["tech_stack"]["website_platform"] = _detect_website_platform_in_html(html_snippet)
@@ -522,23 +522,73 @@ def company_validation():
             "_error": "Gemini API key required for ecommerce AI. Set Gemini_Key in payload or GEMINI_KEY env."
         }
 
-    # POST result to Zoho (hardcoded return URL, same pattern as validation_ai).
+    return {"status": "ok", **result}
+
+
+# ----- Route -----
+@company_validation_bp.route("/company_validation", methods=["POST"])
+def company_validation():
+    """
+    Return 202 immediately (avoids Zoho timeout). Process in background, then POST result to Zoho.
+    Requires Record_ID and website URL in payload.
+    """
+    payload = request.get_json(silent=True) or {}
+    website_url = _get_website_url_from_payload(payload)
     record_id = payload.get("Record_ID")
-    body_for_callback: Dict[str, Any] = {"status": "ok", **result}
-    if record_id is not None:
-        body_for_callback["Record_ID"] = record_id
 
-    def _post_callback():
+    missing = []
+    if not website_url:
+        missing.append("website_url (or url / data with website/domain)")
+    if record_id is None or record_id == "":
+        missing.append("Record_ID")
+
+    if missing:
+        return (
+            jsonify({
+                "status": "error",
+                "message": "Missing required keys for async processing.",
+                "missing": missing,
+            }),
+            400,
+        )
+
+    def _background_worker(payload_data: Dict[str, Any], record_id_value: Any) -> None:
+        logger.info("company_validation: background worker started Record_ID=%s", record_id_value)
         try:
-            requests.post(
-                ZOHO_COMPANY_VALIDATION_RETURN_URL,
-                headers={"Content-Type": "application/json", "Accept": "application/json"},
-                json={"data": body_for_callback},
-                timeout=(10, 60),
-            )
-        except Exception:
-            pass
+            result = _run_company_validation(payload_data)
+            body_for_callback: Dict[str, Any] = {**result, "Record_ID": record_id_value}
+            try:
+                requests.post(
+                    ZOHO_COMPANY_VALIDATION_RETURN_URL,
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    json={"data": body_for_callback},
+                    timeout=(10, 60),
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            logger.exception("company_validation: [%s] unexpected error %s", record_id_value, e)
+            try:
+                requests.post(
+                    ZOHO_COMPANY_VALIDATION_RETURN_URL,
+                    headers={"Content-Type": "application/json", "Accept": "application/json"},
+                    json={
+                        "data": {
+                            "status": "error",
+                            "Record_ID": record_id_value,
+                            "message": "Processing failed",
+                            "details": str(e),
+                        }
+                    },
+                    timeout=(10, 60),
+                )
+            except Exception:
+                pass
 
-    threading.Thread(target=_post_callback, daemon=True).start()
+    threading.Thread(target=_background_worker, args=(payload, record_id), daemon=True).start()
 
-    return jsonify({"status": "ok", **result})
+    return jsonify({
+        "status": "accepted",
+        "message": "Processing started",
+        "Record_ID": record_id,
+    }), 202
