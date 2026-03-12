@@ -131,7 +131,7 @@ _WEBSITE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
     ("/wp-json/", "WordPress"),
     ("/wp-admin/", "WordPress"),
     ("wixstatic.com", "Wix"),
-    ("parastorage.com", "Wix"),  # Wix CDN
+    ("parastorage.com", "Wix"), 
     ("wixsite.com", "Wix"),
     ("squarespace.com", "Squarespace"),
     ("static1.squarespace.com", "Squarespace"),
