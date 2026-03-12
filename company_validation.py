@@ -456,10 +456,12 @@ def _build_ad_agency_prompts_ecommerce(
         "**5. Mobile App (has_mobile_app):** true/false/null from app store or site.\n\n"
         "**6. Subscription Model (has_subscription_model):** subscription/recurring options.\n\n"
         "**7. International Shipping (international_shipping):** true/false/null.\n\n"
+        "**8. Advertising platforms (runs_google_ads, runs_meta_ads, runs_linkedin_ads):** For each, determine if there is evidence the company runs paid ads on that platform. Use the website (e.g. 'As seen on', 'Featured in', partner logos, footer), and optional searches like '[company name] Google Ads' or '[company name] Facebook advertising'. Return true only if you find clear evidence (badges, case studies, press, or statements). Otherwise false or null. These supplement technical detection.\n\n"
         "Do NOT include website_platform or ecommerce_platform — those are determined from the page HTML only.\n\n"
         "Return a single JSON object with: catalogue_size (number|null), product_categories_count (number|null), "
         "shipping_methods (string[]), payment_methods (string[]), has_mobile_app (boolean|null), "
-        "has_subscription_model (boolean|null), international_shipping (boolean|null). Output only the JSON object, no prose.\n\n"
+        "has_subscription_model (boolean|null), international_shipping (boolean|null), "
+        "runs_google_ads (boolean|null), runs_meta_ads (boolean|null), runs_linkedin_ads (boolean|null). Output only the JSON object, no prose.\n\n"
         f"Seed hints:\n{data_block}"
     )
     return system_text, user_text
@@ -479,6 +481,9 @@ def _ensure_ecommerce_keys(parsed: Dict[str, Any]) -> None:
         "has_mobile_app": None,
         "has_subscription_model": None,
         "international_shipping": None,
+        "runs_google_ads": None,
+        "runs_meta_ads": None,
+        "runs_linkedin_ads": None,
     }
     for key, default in defaults.items():
         if key not in parsed:
@@ -586,6 +591,13 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
                     ecom_parsed["website_platform"] = result["tech_stack"]["website_platform"]
                     ecom_parsed["ecommerce_platform"] = result["tech_stack"]["ecommerce_platform"]
                     result["ecommerce_info"] = ecom_parsed
+                    # Merge AI ad inference with HTML detection: true if either source says true.
+                    if ecom_parsed.get("runs_google_ads") is True:
+                        result["checkboxes"]["google_ads"] = True
+                    if ecom_parsed.get("runs_meta_ads") is True:
+                        result["checkboxes"]["meta_ads"] = True
+                    if ecom_parsed.get("runs_linkedin_ads") is True:
+                        result["checkboxes"]["linkedin_ads"] = True
                     logger.info(
                         "company_validation: ecommerce_info catalogue_size=%s has_subscription=%s",
                         ecom_parsed.get("catalogue_size"),
