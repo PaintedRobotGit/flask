@@ -52,8 +52,10 @@ def _get_website_url_from_payload(payload: Dict[str, Any]) -> Optional[str]:
 
 
 # ----- HTML fetch -----
-# Use full response for detection (no truncation) so we don't miss GTM/gtag or other scripts later in the page.
+# Use full response for GTM/ads detection (scripts can be anywhere). For platform detection use only the head.
 _FETCHED_HTML_MAX_CHARS = 5_000_000
+# Only the first N chars are used for website_platform and ecommerce_platform (avoids matching third-party script URLs).
+_HTML_HEAD_FOR_PLATFORM_CHARS = 120_000
 _FETCH_USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
@@ -124,14 +126,24 @@ _LINKEDIN_ADS_PATTERNS = (
     "linkedin insight tag",
 )
 
-# Explicit CMS/site-builder indicators only (avoid generic substrings that cause false positives).
+# Explicit self-identification first (meta generator, "This is X", "Powered by X") — checked only in document head.
+_WEBSITE_PLATFORM_SELF_ID: Tuple[Tuple[str, str], ...] = (
+    ("this is squarespace", "Squarespace"),
+    ("powered by squarespace", "Squarespace"),
+    ("generator.*squarespace", "Squarespace"),
+    ("powered by wordpress", "WordPress"),
+    ("generator.*wordpress", "WordPress"),
+    ("powered by wix", "Wix"),
+    ("powered by webflow", "Webflow"),
+)
+# CMS/site-builder markers (only searched in document head to avoid third-party script URL false positives).
 _WEBSITE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
     ("/wp-content/", "WordPress"),
     ("/wp-includes/", "WordPress"),
     ("/wp-json/", "WordPress"),
     ("/wp-admin/", "WordPress"),
     ("wixstatic.com", "Wix"),
-    ("parastorage.com", "Wix"), 
+    ("parastorage.com", "Wix"),
     ("wixsite.com", "Wix"),
     ("squarespace.com", "Squarespace"),
     ("static1.squarespace.com", "Squarespace"),
@@ -144,7 +156,11 @@ _WEBSITE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
     ("cdn.webflow.com", "Webflow"),
 )
 
-# Explicit ecommerce platform indicators only (no generic substrings; "static/version" removed - too many false positives).
+# Ecommerce self-identification (only in document head).
+_ECOMMERCE_PLATFORM_SELF_ID: Tuple[Tuple[str, str], ...] = (
+    ("powered by shopify", "Shopify"),
+)
+# Ecommerce platform markers (only in document head to avoid third-party script false positives).
 _ECOMMERCE_PLATFORM_PATTERNS: Tuple[Tuple[str, str], ...] = (
     ("cdn.shopify.com", "Shopify"),
     ("myshopify.com", "Shopify"),
@@ -197,10 +213,27 @@ def _detect_linkedin_ads_in_html(html: str) -> bool:
     return any(p.lower() in lower for p in _LINKEDIN_ADS_PATTERNS)
 
 
-def _detect_website_platform_in_html(html: str) -> Optional[str]:
+def _platform_head_only(html: str) -> str:
+    """Return only the document head / start of body for platform detection (avoids third-party script URLs)."""
     if not html or not isinstance(html, str):
+        return ""
+    return html[:_HTML_HEAD_FOR_PLATFORM_CHARS] if len(html) > _HTML_HEAD_FOR_PLATFORM_CHARS else html
+
+
+def _detect_website_platform_in_html(html: str) -> Optional[str]:
+    """Detect CMS/site builder from HTML. Uses only the first _HTML_HEAD_FOR_PLATFORM_CHARS to avoid false positives from third-party script URLs."""
+    head = _platform_head_only(html)
+    if not head:
         return None
-    lower = html.lower()
+    lower = head.lower()
+    # 1) Explicit self-identification first (e.g. "This is Squarespace", generator meta).
+    for pattern, name in _WEBSITE_PLATFORM_SELF_ID:
+        if ".*" in pattern:
+            if re.search(pattern, lower):
+                return name
+        elif pattern.lower() in lower:
+            return name
+    # 2) Structural markers (same-origin paths / same-origin script URLs live in head).
     for pattern, name in _WEBSITE_PLATFORM_PATTERNS:
         if pattern.lower() in lower:
             return name
@@ -208,9 +241,14 @@ def _detect_website_platform_in_html(html: str) -> Optional[str]:
 
 
 def _detect_ecommerce_platform_in_html(html: str) -> Optional[str]:
-    if not html or not isinstance(html, str):
+    """Detect ecommerce platform from HTML. Uses only the first _HTML_HEAD_FOR_PLATFORM_CHARS to avoid false positives from third-party embeds."""
+    head = _platform_head_only(html)
+    if not head:
         return None
-    lower = html.lower()
+    lower = head.lower()
+    for pattern, name in _ECOMMERCE_PLATFORM_SELF_ID:
+        if pattern.lower() in lower:
+            return name
     for pattern, name in _ECOMMERCE_PLATFORM_PATTERNS:
         if pattern.lower() in lower:
             return name
@@ -507,6 +545,9 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
                     ecom_parsed = _parse_strict_json_object(completion_text)
                     _ensure_ecommerce_keys(ecom_parsed)
                     _normalize_ecommerce_output(ecom_parsed)
+                    # HTML detection wins: never let AI override platform when we detected from the page.
+                    if result["tech_stack"]["website_platform"] is not None:
+                        ecom_parsed["website_platform"] = result["tech_stack"]["website_platform"]
                     if result["tech_stack"]["ecommerce_platform"] is not None:
                         ecom_parsed["ecommerce_platform"] = result["tech_stack"]["ecommerce_platform"]
                     result["ecommerce_info"] = ecom_parsed
