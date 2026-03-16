@@ -5,7 +5,7 @@ Fully self-contained — no dependency on validation_ai.
 validation_ai owns Marketing Insights / Pitch Data; this module owns hard boolean/info returns.
 """
 from flask import Blueprint, request, jsonify
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional
 import re
 import json
 import logging
@@ -25,60 +25,6 @@ if not logger.handlers:
     _h.setLevel(logging.INFO)
     logger.setLevel(logging.INFO)
     logger.addHandler(_h)
-
-
-# ----- Revenue / employee count from payload (no API call) -----
-def _revenue_and_employees_from_payload(payload: Dict[str, Any]) -> Tuple[Optional[int], Optional[int]]:
-    """
-    Read Annual_Revenue and Number_of_Employees from payload (top-level or data).
-    Returns (revenue, employees); each is int or None. No Apollo call.
-    """
-    def _int_or_none(v: Any) -> Optional[int]:
-        if v is None:
-            return None
-        if isinstance(v, int) and v >= 0:
-            return v
-        if isinstance(v, float) and not (v != v) and v >= 0:
-            return int(v)
-        if isinstance(v, str) and v.strip():
-            try:
-                return int(float(v.strip().replace(",", "")))
-            except ValueError:
-                return None
-        return None
-
-    revenue, employees = None, None
-    # Top-level
-    for rev_key in ("Annual_Revenue", "annual_revenue", "revenue"):
-        v = payload.get(rev_key)
-        if v is not None:
-            revenue = _int_or_none(v)
-            if revenue is not None:
-                break
-    for emp_key in ("Number_of_Employees", "estimated_num_employees", "employees", "employee_count", "num_employees"):
-        v = payload.get(emp_key)
-        if v is not None:
-            employees = _int_or_none(v)
-            if employees is not None:
-                break
-    # Under data
-    user_data = payload.get("data")
-    if isinstance(user_data, dict):
-        if revenue is None:
-            for rev_key in ("Annual_Revenue", "annual_revenue", "revenue"):
-                v = user_data.get(rev_key)
-                if v is not None:
-                    revenue = _int_or_none(v)
-                    if revenue is not None:
-                        break
-        if employees is None:
-            for emp_key in ("Number_of_Employees", "estimated_num_employees", "employees", "employee_count", "num_employees"):
-                v = user_data.get(emp_key)
-                if v is not None:
-                    employees = _int_or_none(v)
-                    if employees is not None:
-                        break
-    return (revenue, employees)
 
 
 def _industry_string_from_payload(payload: Dict[str, Any]) -> Optional[str]:
@@ -596,8 +542,6 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
             "checkboxes": {"tag_manager": False, "google_ads": False, "meta_ads": False, "linkedin_ads": False},
             "ecommerce_info": None,
             "html_fetched": False,
-            "Annual_Revenue": None,
-            "Number_of_Employees": None,
             "Industry_String": None,
             "Sales_Type": "Lead Gen",
         }
@@ -615,8 +559,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
     if connect_timeout_seconds < 10:
         connect_timeout_seconds = 10
 
-    # Revenue, employee count, industry: from payload (e.g. Zoho/CRM or Apollo account data per https://docs.apollo.io/reference/view-an-account)
-    payload_revenue, payload_employees = _revenue_and_employees_from_payload(payload)
+    # Industry from payload (e.g. Zoho/CRM or Apollo account data).
     result: Dict[str, Any] = {
         "website_url": website_url,
         "tech_stack": {"website_platform": None, "ecommerce_platform": None},
@@ -627,8 +570,6 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
             "linkedin_ads": False,
         },
         "ecommerce_info": None,
-        "Annual_Revenue": payload_revenue,
-        "Number_of_Employees": payload_employees,
         "Industry_String": _industry_string_from_payload(payload),
         "Sales_Type": None,
     }
