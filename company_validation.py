@@ -736,11 +736,7 @@ def company_validation():
         logger.info("company_validation: background worker started Record_ID=%s", record_id_value)
         try:
             result = _run_company_validation(payload_data)
-            body_for_callback: Dict[str, Any] = {
-                **result,
-                "Record_ID": record_id_value,
-                "apollo_payload": payload_data,
-            }
+            body_for_callback: Dict[str, Any] = {**result, "Record_ID": record_id_value}
             try:
                 requests.post(
                     ZOHO_COMPANY_VALIDATION_RETURN_URL,
@@ -762,7 +758,6 @@ def company_validation():
                             "Record_ID": record_id_value,
                             "message": "Processing failed",
                             "details": str(e),
-                            "apollo_payload": payload_data,
                         }
                     },
                     timeout=(10, 60),
