@@ -599,6 +599,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
             "Annual_Revenue": None,
             "Number_of_Employees": None,
             "Industry_String": None,
+            "Sales_Type": "Lead Gen",
         }
 
     gemini_key = (str(payload.get("Gemini_Key", "")).strip() or os.getenv("GEMINI_KEY", "").strip())
@@ -629,6 +630,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
         "Annual_Revenue": payload_revenue,
         "Number_of_Employees": payload_employees,
         "Industry_String": _industry_string_from_payload(payload),
+        "Sales_Type": None,
     }
 
     html_snippet = _fetch_page_html(website_url, timeout_seconds=timeout_seconds)
@@ -636,6 +638,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
         logger.warning("company_validation: HTML fetch failed or empty for %s", website_url)
         result["html_fetched"] = False
         result["message"] = "Could not fetch page HTML."
+        result["Sales_Type"] = "Lead Gen"
         return {"status": "ok", **result}
 
     result["html_fetched"] = True
@@ -647,6 +650,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
         website_platform = "Shopify"
     result["tech_stack"]["website_platform"] = website_platform
     result["tech_stack"]["ecommerce_platform"] = ecommerce_platform
+    result["Sales_Type"] = "E-Commerce" if ecommerce_platform else "Lead Gen"
     result["checkboxes"]["tag_manager"] = _detect_tag_manager_in_html(html_snippet)
     result["checkboxes"]["google_ads"] = _detect_google_ads_in_html(html_snippet)
     result["checkboxes"]["meta_ads"] = _detect_meta_ads_in_html(html_snippet)
