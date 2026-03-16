@@ -5,7 +5,7 @@ Fully self-contained — no dependency on validation_ai.
 validation_ai owns Marketing Insights / Pitch Data; this module owns hard boolean/info returns.
 """
 from flask import Blueprint, request, jsonify
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Tuple
 import re
 import json
 import logging
