@@ -81,6 +81,31 @@ def _revenue_and_employees_from_payload(payload: Dict[str, Any]) -> Tuple[Option
     return (revenue, employees)
 
 
+def _industry_string_from_payload(payload: Dict[str, Any]) -> Optional[str]:
+    """
+    Read industry from payload (Apollo sends "industry"). Returns trimmed string or None.
+    Used for Creator record field Industry_String.
+    """
+    def _str_or_none(v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+        return None
+
+    v = payload.get("industry")
+    s = _str_or_none(v)
+    if s is not None:
+        return s
+    user_data = payload.get("data")
+    if isinstance(user_data, dict):
+        v = user_data.get("industry")
+        s = _str_or_none(v)
+        if s is not None:
+            return s
+    return None
+
+
 # ----- URL from payload -----
 def _get_website_url_from_payload(payload: Dict[str, Any]) -> Optional[str]:
     """Extract a single website URL from payload (website_url or data keys)."""
@@ -573,6 +598,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
             "html_fetched": False,
             "Annual_Revenue": None,
             "Number_of_Employees": None,
+            "Industry_String": None,
         }
 
     gemini_key = (str(payload.get("Gemini_Key", "")).strip() or os.getenv("GEMINI_KEY", "").strip())
@@ -588,7 +614,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
     if connect_timeout_seconds < 10:
         connect_timeout_seconds = 10
 
-    # Revenue and employee count: use payload first (e.g. from Zoho/CRM/Apollo), then Apollo enrich only if missing
+    # Revenue, employee count, industry: from payload (e.g. Zoho/CRM or Apollo account data per https://docs.apollo.io/reference/view-an-account)
     payload_revenue, payload_employees = _revenue_and_employees_from_payload(payload)
     result: Dict[str, Any] = {
         "website_url": website_url,
@@ -602,6 +628,7 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
         "ecommerce_info": None,
         "Annual_Revenue": payload_revenue,
         "Number_of_Employees": payload_employees,
+        "Industry_String": _industry_string_from_payload(payload),
     }
 
     html_snippet = _fetch_page_html(website_url, timeout_seconds=timeout_seconds)
