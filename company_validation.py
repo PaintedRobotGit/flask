@@ -640,8 +640,13 @@ def _run_company_validation(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     result["html_fetched"] = True
     # Website and ecommerce platform are guaranteed from HTML only (never from AI).
-    result["tech_stack"]["website_platform"] = _detect_website_platform_in_html(html_snippet)
-    result["tech_stack"]["ecommerce_platform"] = _detect_ecommerce_platform_in_html(html_snippet)
+    website_platform = _detect_website_platform_in_html(html_snippet)
+    ecommerce_platform = _detect_ecommerce_platform_in_html(html_snippet)
+    # If the site is clearly a Shopify store, treat Shopify as both the website and ecommerce platform.
+    if website_platform is None and ecommerce_platform == "Shopify":
+        website_platform = "Shopify"
+    result["tech_stack"]["website_platform"] = website_platform
+    result["tech_stack"]["ecommerce_platform"] = ecommerce_platform
     result["checkboxes"]["tag_manager"] = _detect_tag_manager_in_html(html_snippet)
     result["checkboxes"]["google_ads"] = _detect_google_ads_in_html(html_snippet)
     result["checkboxes"]["meta_ads"] = _detect_meta_ads_in_html(html_snippet)
