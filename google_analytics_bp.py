@@ -176,6 +176,20 @@ def _build_report_request(report_type: str, query=None):
             "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
             "limit": 100,
         },
+        "acquisition_overview": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "sessionDefaultChannelGroup"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "totalUsers"},
+                {"name": "newUsers"},
+                {"name": "engagedSessions"},
+                {"name": "engagementRate"},
+                {"name": "conversions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 100,
+        },
         "top_pages": {
             "dateRanges": last_month_range,
             "dimensions": [{"name": "pagePath"}],
