@@ -142,14 +142,19 @@ def _get_google_access_token(*, client_email: str, private_key: str) -> str:
 
 
 def _build_report_request(report_type: str, query=None):
-    last_30_days = [{"startDate": "30daysAgo", "endDate": "yesterday"}]
     last_month_start, last_month_end = _get_last_month_range()
+    last_month_range = [
+        {
+            "startDate": last_month_start.isoformat(),
+            "endDate": last_month_end.isoformat(),
+        }
+    ]
     prior_year_start = last_month_start.replace(year=last_month_start.year - 1)
     prior_year_end = last_month_end.replace(year=last_month_end.year - 1)
 
     reports = {
         "overview": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "date"}],
             "metrics": [
                 {"name": "activeUsers"},
@@ -161,7 +166,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 1000,
         },
         "traffic_sources": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "sessionSourceMedium"}],
             "metrics": [
                 {"name": "sessions"},
@@ -172,7 +177,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 100,
         },
         "top_pages": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "pagePath"}],
             "metrics": [
                 {"name": "screenPageViews"},
@@ -185,7 +190,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 100,
         },
         "landing_pages": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "landingPage"}],
             "metrics": [
                 {"name": "sessions"},
@@ -197,7 +202,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 100,
         },
         "geo_countries": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "country"}],
             "metrics": [
                 {"name": "activeUsers"},
@@ -208,7 +213,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 100,
         },
         "geo_cities": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "city"}],
             "metrics": [
                 {"name": "activeUsers"},
@@ -219,7 +224,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 100,
         },
         "devices": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "deviceCategory"}],
             "metrics": [
                 {"name": "activeUsers"},
@@ -230,7 +235,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 10,
         },
         "channels": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "sessionDefaultChannelGroup"}],
             "metrics": [
                 {"name": "sessions"},
@@ -242,7 +247,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 50,
         },
         "campaigns": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "sessionCampaignName"}],
             "metrics": [
                 {"name": "sessions"},
@@ -254,7 +259,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 100,
         },
         "events": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "eventName"}],
             "metrics": [
                 {"name": "eventCount"},
@@ -265,14 +270,14 @@ def _build_report_request(report_type: str, query=None):
             "limit": 100,
         },
         "hourly_trend": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "hour"}],
             "metrics": [{"name": "activeUsers"}, {"name": "sessions"}],
             "orderBys": [{"dimension": {"dimensionName": "hour"}}],
             "limit": 24,
         },
         "daily_trend": {
-            "dateRanges": last_30_days,
+            "dateRanges": last_month_range,
             "dimensions": [{"name": "date"}],
             "metrics": [
                 {"name": "activeUsers"},
