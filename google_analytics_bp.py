@@ -43,7 +43,7 @@ def google_analytics_report():
         access_token = _get_google_access_token(
             client_email=client_email, private_key=private_key
         )
-        report_request = _build_report_request(report_type)
+        report_request = _build_report_request(report_type, payload.get("query"))
     except ValueError as value_error:
         return jsonify({"status": "error", "message": str(value_error)}), 400
     except Exception as auth_error:
@@ -139,7 +139,7 @@ def _get_google_access_token(*, client_email: str, private_key: str) -> str:
     return credentials.token
 
 
-def _build_report_request(report_type: str):
+def _build_report_request(report_type: str, query=None):
     last_30_days = [{"startDate": "30daysAgo", "endDate": "yesterday"}]
 
     reports = {
@@ -280,11 +280,42 @@ def _build_report_request(report_type: str):
         },
     }
 
+    if report_type == "custom":
+        custom_query = _parse_custom_query(query)
+        if not custom_query:
+            raise ValueError(
+                "For report_type 'custom', provide optional field 'query' as a JSON object or JSON string."
+            )
+        return custom_query
+
     report_request = reports.get(report_type)
     if report_request is None:
-        allowed = ", ".join(sorted(reports.keys()))
+        allowed = ", ".join(sorted(list(reports.keys()) + ["custom"]))
         raise ValueError(
             f"Unsupported report_type '{report_type}'. Supported values: {allowed}"
         )
 
     return report_request
+
+
+def _parse_custom_query(query):
+    if query is None:
+        return None
+
+    if isinstance(query, dict):
+        return query
+
+    if isinstance(query, str):
+        query_text = query.strip()
+        if not query_text:
+            return None
+        try:
+            parsed = json.loads(query_text)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+    raise ValueError(
+        "Invalid 'query' field. For custom reports, provide 'query' as a JSON object or JSON string."
+    )
