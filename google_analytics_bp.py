@@ -58,16 +58,24 @@ def google_analytics_report():
 
     try:
         api_method = "batchRunReports" if _is_batch_report(report_request) else "runReport"
-        response = requests.post(
-            f"{GA_API_BASE}/properties/{property_id}:{api_method}",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            },
-            json=report_request,
-            timeout=(10, 45),
-        )
-        response.raise_for_status()
+        if report_type == "site_journey_flow_deep" and api_method == "runReport":
+            response_json = _fetch_all_run_report_rows(
+                access_token=access_token,
+                property_id=property_id,
+                report_request=report_request,
+            )
+        else:
+            response = requests.post(
+                f"{GA_API_BASE}/properties/{property_id}:{api_method}",
+                headers={
+                    "Authorization": f"Bearer {access_token}",
+                    "Content-Type": "application/json",
+                },
+                json=report_request,
+                timeout=(10, 45),
+            )
+            response.raise_for_status()
+            response_json = response.json()
     except requests.HTTPError as http_error:
         error_body = None
         if http_error.response is not None:
@@ -92,7 +100,6 @@ def google_analytics_report():
             }
         ), 502
 
-    response_json = response.json()
     result = {
         "status": "ok",
         "propertyID": property_id,
@@ -990,3 +997,53 @@ def _normalize_path(value):
             return parsed
         parsed = "/" + parsed
     return parsed
+
+
+def _fetch_all_run_report_rows(*, access_token, property_id, report_request):
+    limit = _to_int(report_request.get("limit")) or 1000
+    limit = max(100, min(limit, 100000))
+    offset = 0
+    all_rows = []
+    base_response = None
+
+    while True:
+        paged_request = dict(report_request)
+        paged_request["limit"] = limit
+        paged_request["offset"] = offset
+
+        response = requests.post(
+            f"{GA_API_BASE}/properties/{property_id}:runReport",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json=paged_request,
+            timeout=(10, 45),
+        )
+        response.raise_for_status()
+        page_json = response.json()
+
+        if base_response is None:
+            base_response = page_json.copy()
+            base_response["rows"] = []
+
+        page_rows = page_json.get("rows", [])
+        all_rows.extend(page_rows)
+
+        row_count = _to_int(page_json.get("rowCount"))
+        fetched_count = len(all_rows)
+        if not page_rows:
+            break
+        if row_count is not None and fetched_count >= row_count:
+            break
+        if len(page_rows) < limit:
+            break
+
+        offset += len(page_rows)
+
+    if base_response is None:
+        return {"rows": []}
+
+    base_response["rows"] = all_rows
+    base_response["fetchedRowCount"] = len(all_rows)
+    return base_response
