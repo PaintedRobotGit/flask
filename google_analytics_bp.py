@@ -190,6 +190,277 @@ def _build_report_request(report_type: str, query=None):
             "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
             "limit": 100,
         },
+        "user_acquisition_by_source": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "firstUserSourceMedium"}],
+            "metrics": [
+                {"name": "newUsers"},
+                {"name": "totalUsers"},
+                {"name": "sessions"},
+                {"name": "conversions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "newUsers"}, "desc": True}],
+            "limit": 200,
+        },
+        "google_organic_search_traffic": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "landingPage"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "totalUsers"},
+                {"name": "newUsers"},
+                {"name": "engagedSessions"},
+            ],
+            "dimensionFilter": {
+                "andGroup": {
+                    "expressions": [
+                        {
+                            "filter": {
+                                "fieldName": "sessionSource",
+                                "stringFilter": {
+                                    "matchType": "EXACT",
+                                    "value": "google",
+                                    "caseSensitive": False,
+                                },
+                            }
+                        },
+                        {
+                            "filter": {
+                                "fieldName": "sessionMedium",
+                                "stringFilter": {
+                                    "matchType": "EXACT",
+                                    "value": "organic",
+                                    "caseSensitive": False,
+                                },
+                            }
+                        },
+                    ]
+                }
+            },
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "acquisition_queries": {
+            "dateRanges": last_month_range,
+            "dimensions": [
+                {"name": "sessionManualTerm"},
+                {"name": "sessionSourceMedium"},
+            ],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "engagedSessions"},
+                {"name": "conversions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "acquition_queries": {
+            "dateRanges": last_month_range,
+            "dimensions": [
+                {"name": "sessionManualTerm"},
+                {"name": "sessionSourceMedium"},
+            ],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "engagedSessions"},
+                {"name": "conversions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "lead_acquisition": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "sessionDefaultChannelGroup"}],
+            "metrics": [{"name": "conversions"}, {"name": "sessions"}],
+            "metricFilter": {
+                "filter": {
+                    "fieldName": "conversions",
+                    "numericFilter": {
+                        "operation": "GREATER_THAN",
+                        "value": {"doubleValue": 0},
+                    },
+                }
+            },
+            "orderBys": [{"metric": {"metricName": "conversions"}, "desc": True}],
+            "limit": 100,
+        },
+        "non_google_campaign": {
+            "dateRanges": last_month_range,
+            "dimensions": [
+                {"name": "sessionSource"},
+                {"name": "sessionMedium"},
+                {"name": "sessionCampaignName"},
+            ],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "conversions"},
+                {"name": "totalRevenue"},
+            ],
+            "dimensionFilter": {
+                "notExpression": {
+                    "filter": {
+                        "fieldName": "sessionSource",
+                        "stringFilter": {
+                            "matchType": "EXACT",
+                            "value": "google",
+                            "caseSensitive": False,
+                        },
+                    }
+                }
+            },
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "engagement_overview": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "date"}],
+            "metrics": [
+                {"name": "engagedSessions"},
+                {"name": "engagementRate"},
+                {"name": "averageSessionDuration"},
+                {"name": "eventCount"},
+            ],
+            "orderBys": [{"dimension": {"dimensionName": "date"}}],
+            "limit": 1000,
+        },
+        "engagement_events": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "eventName"}],
+            "metrics": [
+                {"name": "eventCount"},
+                {"name": "eventCountPerUser"},
+                {"name": "totalUsers"},
+            ],
+            "orderBys": [{"metric": {"metricName": "eventCount"}, "desc": True}],
+            "limit": 200,
+        },
+        "pages_and_screens": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "pagePath"}, {"name": "pageTitle"}],
+            "metrics": [
+                {"name": "screenPageViews"},
+                {"name": "totalUsers"},
+                {"name": "averageSessionDuration"},
+            ],
+            "orderBys": [
+                {"metric": {"metricName": "screenPageViews"}, "desc": True}
+            ],
+            "limit": 200,
+        },
+        "landing_page": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "landingPage"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "engagedSessions"},
+                {"name": "conversions"},
+                {"name": "bounceRate"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "user_overview": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "date"}],
+            "metrics": [
+                {"name": "totalUsers"},
+                {"name": "newUsers"},
+                {"name": "activeUsers"},
+                {"name": "returningUsers"},
+            ],
+            "orderBys": [{"dimension": {"dimensionName": "date"}}],
+            "limit": 1000,
+        },
+        "audience": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "country"}, {"name": "language"}],
+            "metrics": [{"name": "totalUsers"}, {"name": "newUsers"}],
+            "orderBys": [{"metric": {"metricName": "totalUsers"}, "desc": True}],
+            "limit": 200,
+        },
+        "demographic_details": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "country"}, {"name": "city"}],
+            "metrics": [{"name": "totalUsers"}, {"name": "newUsers"}],
+            "orderBys": [{"metric": {"metricName": "totalUsers"}, "desc": True}],
+            "limit": 200,
+        },
+        "user_queries": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "sessionManualTerm"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "engagedSessions"},
+                {"name": "conversions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "tech_details": {
+            "dateRanges": last_month_range,
+            "dimensions": [
+                {"name": "deviceCategory"},
+                {"name": "operatingSystem"},
+                {"name": "browser"},
+            ],
+            "metrics": [{"name": "totalUsers"}, {"name": "sessions"}],
+            "orderBys": [{"metric": {"metricName": "totalUsers"}, "desc": True}],
+            "limit": 200,
+        },
+        "conversions_overview": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "date"}],
+            "metrics": [
+                {"name": "conversions"},
+                {"name": "totalRevenue"},
+                {"name": "purchaseRevenue"},
+            ],
+            "orderBys": [{"dimension": {"dimensionName": "date"}}],
+            "limit": 1000,
+        },
+        "conversion_events": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "eventName"}],
+            "metrics": [{"name": "conversions"}, {"name": "eventCount"}],
+            "orderBys": [{"metric": {"metricName": "conversions"}, "desc": True}],
+            "limit": 200,
+        },
+        "ecommerce_purchases": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "itemName"}],
+            "metrics": [
+                {"name": "itemPurchaseQuantity"},
+                {"name": "itemRevenue"},
+                {"name": "purchases"},
+            ],
+            "orderBys": [{"metric": {"metricName": "itemRevenue"}, "desc": True}],
+            "limit": 200,
+        },
+        "purchase_journey": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "sessionDefaultChannelGroup"}],
+            "metrics": [
+                {"name": "addToCarts"},
+                {"name": "checkouts"},
+                {"name": "purchases"},
+            ],
+            "orderBys": [{"metric": {"metricName": "purchases"}, "desc": True}],
+            "limit": 100,
+        },
+        "checkout_journey": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "deviceCategory"}],
+            "metrics": [{"name": "checkouts"}, {"name": "purchases"}],
+            "orderBys": [{"metric": {"metricName": "checkouts"}, "desc": True}],
+            "limit": 50,
+        },
+        "retention_overview": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "date"}],
+            "metrics": [{"name": "activeUsers"}, {"name": "returningUsers"}],
+            "orderBys": [{"dimension": {"dimensionName": "date"}}],
+            "limit": 1000,
+        },
         "top_pages": {
             "dateRanges": last_month_range,
             "dimensions": [{"name": "pagePath"}],
