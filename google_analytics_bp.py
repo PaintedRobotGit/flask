@@ -844,19 +844,23 @@ def _build_deep_journey_paths(*, response_json, depth, top_paths):
 
     edges = {}
     outgoing_totals = {}
+    page_labels = {}
     for row in rows:
         dvals = [v.get("value", "") for v in row.get("dimensionValues", [])]
         mvals = [v.get("value", "") for v in row.get("metricValues", [])]
 
         referrer = _extract_path(dvals[idx_referrer]) if idx_referrer is not None and idx_referrer < len(dvals) else "(entry)"
-        path = dvals[idx_path] if idx_path is not None and idx_path < len(dvals) else ""
+        path = _normalize_path(dvals[idx_path]) if idx_path is not None and idx_path < len(dvals) else ""
         title = dvals[idx_title] if idx_title is not None and idx_title < len(dvals) else ""
         users = _to_float(mvals[idx_users]) if idx_users < len(mvals) else 0.0
         if not path or users is None or users <= 0:
             continue
 
-        source = referrer or "(entry)"
-        target = title.strip() or path.strip()
+        source = _normalize_path(referrer or "(entry)")
+        target = path
+        if target not in page_labels:
+            page_labels[target] = title.strip() or target
+
         key = (source, target)
         edges[key] = edges.get(key, 0.0) + users
         outgoing_totals[source] = outgoing_totals.get(source, 0.0) + users
@@ -884,15 +888,17 @@ def _build_deep_journey_paths(*, response_json, depth, top_paths):
 
     paths = []
     for edge in initial_edges:
+        first_label = page_labels.get(edge["target"], edge["target"])
         _dfs_paths(
             adjacency=adjacency,
             current_node=edge["target"],
-            current_path=[edge["target"]],
+            current_path=[first_label],
             cumulative_users=edge["users"],
             cumulative_prob=edge["transition_probability"],
             max_depth=depth,
             paths=paths,
             visited={edge["target"]},
+            page_labels=page_labels,
         )
 
     paths.sort(key=lambda x: (x["estimated_users"], x["path_probability"]), reverse=True)
@@ -909,6 +915,7 @@ def _dfs_paths(
     max_depth,
     paths,
     visited,
+    page_labels,
 ):
     paths.append(
         {
@@ -926,15 +933,17 @@ def _dfs_paths(
         next_node = edge["target"]
         if next_node in visited:
             continue
+        next_label = page_labels.get(next_node, next_node)
         _dfs_paths(
             adjacency=adjacency,
             current_node=next_node,
-            current_path=current_path + [next_node],
+            current_path=current_path + [next_label],
             cumulative_users=min(cumulative_users, edge["users"]),
             cumulative_prob=cumulative_prob * edge["transition_probability"],
             max_depth=max_depth,
             paths=paths,
             visited=visited | {next_node},
+            page_labels=page_labels,
         )
 
 
@@ -966,3 +975,18 @@ def _extract_path(referrer):
         value = value[:q_idx]
 
     return value or "(entry)"
+
+
+def _normalize_path(value):
+    if not value:
+        return "(entry)"
+
+    parsed = _extract_path(str(value))
+    parsed = parsed.strip()
+    if not parsed:
+        return "(entry)"
+    if not parsed.startswith("/"):
+        if parsed == "(entry)":
+            return parsed
+        parsed = "/" + parsed
+    return parsed
