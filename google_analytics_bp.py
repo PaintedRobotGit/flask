@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import service_account
+from datetime import date, timedelta
 import json
 import requests
 
@@ -56,8 +57,9 @@ def google_analytics_report():
         ), 400
 
     try:
+        api_method = "batchRunReports" if _is_batch_report(report_request) else "runReport"
         response = requests.post(
-            f"{GA_API_BASE}/properties/{property_id}:runReport",
+            f"{GA_API_BASE}/properties/{property_id}:{api_method}",
             headers={
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",
@@ -141,6 +143,9 @@ def _get_google_access_token(*, client_email: str, private_key: str) -> str:
 
 def _build_report_request(report_type: str, query=None):
     last_30_days = [{"startDate": "30daysAgo", "endDate": "yesterday"}]
+    last_month_start, last_month_end = _get_last_month_range()
+    prior_year_start = last_month_start.replace(year=last_month_start.year - 1)
+    prior_year_end = last_month_end.replace(year=last_month_end.year - 1)
 
     reports = {
         "overview": {
@@ -278,6 +283,68 @@ def _build_report_request(report_type: str, query=None):
             "orderBys": [{"dimension": {"dimensionName": "date"}}],
             "limit": 1000,
         },
+        "monthly_channel_breakdown": {
+            "reports": [
+                {
+                    "dateRanges": [
+                        {
+                            "startDate": last_month_start.isoformat(),
+                            "endDate": last_month_end.isoformat(),
+                            "name": "current",
+                        }
+                    ],
+                    "dimensions": [
+                        {"name": "date"},
+                        {"name": "sessionDefaultChannelGroup"},
+                    ],
+                    "metrics": [
+                        {"name": "sessions"},
+                        {"name": "totalUsers"},
+                        {"name": "newUsers"},
+                        {"name": "engagedSessions"},
+                        {"name": "engagementRate"},
+                        {"name": "averageSessionDuration"},
+                    ],
+                    "orderBys": [
+                        {"dimension": {"dimensionName": "date"}, "desc": False}
+                    ],
+                    "limit": 10000,
+                    "returnPropertyQuota": True,
+                },
+                {
+                    "dateRanges": [
+                        {
+                            "startDate": last_month_start.isoformat(),
+                            "endDate": last_month_end.isoformat(),
+                            "name": "current",
+                        },
+                        {
+                            "startDate": prior_year_start.isoformat(),
+                            "endDate": prior_year_end.isoformat(),
+                            "name": "prior_year",
+                        },
+                    ],
+                    "dimensions": [
+                        {"name": "sessionSource"},
+                        {"name": "sessionMedium"},
+                        {"name": "sessionCampaignName"},
+                        {"name": "sessionDefaultChannelGroup"},
+                    ],
+                    "metrics": [
+                        {"name": "sessions"},
+                        {"name": "totalUsers"},
+                        {"name": "newUsers"},
+                        {"name": "engagedSessions"},
+                        {"name": "engagementRate"},
+                        {"name": "averageSessionDuration"},
+                    ],
+                    "orderBys": [
+                        {"metric": {"metricName": "sessions"}, "desc": True}
+                    ],
+                    "limit": 100,
+                },
+            ]
+        },
     }
 
     if report_type == "custom":
@@ -319,3 +386,17 @@ def _parse_custom_query(query):
     raise ValueError(
         "Invalid 'query' field. For custom reports, provide 'query' as a JSON object or JSON string."
     )
+
+
+def _is_batch_report(report_request):
+    return isinstance(report_request, dict) and isinstance(
+        report_request.get("reports"), list
+    )
+
+
+def _get_last_month_range():
+    today = date.today()
+    first_of_current_month = today.replace(day=1)
+    last_of_previous_month = first_of_current_month - timedelta(days=1)
+    first_of_previous_month = last_of_previous_month.replace(day=1)
+    return first_of_previous_month, last_of_previous_month
