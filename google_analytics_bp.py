@@ -459,34 +459,24 @@ def _build_report_request(report_type: str, query=None):
         "site_journey_flow": {
             "dateRanges": last_month_range,
             "dimensions": [
+                {"name": "eventName"},
                 {"name": "pageReferrer"},
                 {"name": "pagePath"},
                 {"name": "pageTitle"},
             ],
             "metrics": [{"name": "activeUsers"}, {"name": "screenPageViews"}],
-            "dimensionFilter": {
-                "filter": {
-                    "fieldName": "eventName",
-                    "stringFilter": {"matchType": "EXACT", "value": "page_view"},
-                }
-            },
             "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
             "limit": 1000,
         },
         "site_journey_flow_deep": {
             "dateRanges": last_month_range,
             "dimensions": [
+                {"name": "eventName"},
                 {"name": "pageReferrer"},
                 {"name": "pagePath"},
                 {"name": "pageTitle"},
             ],
             "metrics": [{"name": "activeUsers"}, {"name": "screenPageViews"}],
-            "dimensionFilter": {
-                "filter": {
-                    "fieldName": "eventName",
-                    "stringFilter": {"matchType": "EXACT", "value": "page_view"},
-                }
-            },
             "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
             "limit": 1000,
         },
@@ -854,6 +844,7 @@ def _build_deep_journey_paths(*, response_json, depth, top_paths):
     dimension_headers = [h.get("name", "") for h in response_json.get("dimensionHeaders", [])]
     metric_headers = [h.get("name", "") for h in response_json.get("metricHeaders", [])]
 
+    idx_event = _header_index(dimension_headers, "eventName")
     idx_referrer = _header_index(dimension_headers, "pageReferrer")
     idx_path = _header_index(dimension_headers, "pagePath")
     idx_title = _header_index(dimension_headers, "pageTitle")
@@ -863,11 +854,13 @@ def _build_deep_journey_paths(*, response_json, depth, top_paths):
 
     edges = {}
     outgoing_totals = {}
+    entry_targets = {}
     page_labels = {}
     for row in rows:
         dvals = [v.get("value", "") for v in row.get("dimensionValues", [])]
         mvals = [v.get("value", "") for v in row.get("metricValues", [])]
 
+        event_name = dvals[idx_event] if idx_event is not None and idx_event < len(dvals) else ""
         referrer = _extract_path(dvals[idx_referrer]) if idx_referrer is not None and idx_referrer < len(dvals) else "(entry)"
         path = _normalize_path(dvals[idx_path]) if idx_path is not None and idx_path < len(dvals) else ""
         title = dvals[idx_title] if idx_title is not None and idx_title < len(dvals) else ""
@@ -883,6 +876,8 @@ def _build_deep_journey_paths(*, response_json, depth, top_paths):
         key = (source, target)
         edges[key] = edges.get(key, 0.0) + users
         outgoing_totals[source] = outgoing_totals.get(source, 0.0) + users
+        if event_name == "session_start":
+            entry_targets[target] = entry_targets.get(target, 0.0) + users
 
     adjacency = {}
     for (source, target), users in edges.items():
@@ -896,7 +891,22 @@ def _build_deep_journey_paths(*, response_json, depth, top_paths):
         adjacency[source] = adjacency[source][:25]
 
     start_node = "(entry)"
-    initial_edges = adjacency.get(start_node, [])
+    initial_edges = []
+    if entry_targets:
+        total_entry_users = sum(entry_targets.values())
+        if total_entry_users > 0:
+            for target, users in entry_targets.items():
+                initial_edges.append(
+                    {
+                        "target": target,
+                        "users": users,
+                        "transition_probability": users / total_entry_users,
+                    }
+                )
+            initial_edges.sort(key=lambda x: x["users"], reverse=True)
+            initial_edges = initial_edges[:25]
+    if not initial_edges:
+        initial_edges = adjacency.get(start_node, [])
     if not initial_edges:
         initial_edges = []
         for source, transitions in adjacency.items():
