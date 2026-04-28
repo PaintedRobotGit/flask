@@ -97,6 +97,11 @@ def google_analytics_funnel_report():
             "endpoint": "runFunnelReport",
             "report_type": report_type or "custom",
             "data": response.json(),
+            "normalized_funnel_rows": _normalize_funnel_rows(
+                response.json(),
+                payload.get("funnel_name") or report_type or "custom_funnel",
+                payload.get("source_medium"),
+            ),
         }
     ), 200
 
@@ -357,3 +362,124 @@ def _get_last_month_range():
     last_of_previous_month = first_of_current_month - timedelta(days=1)
     first_of_previous_month = last_of_previous_month.replace(day=1)
     return first_of_previous_month, last_of_previous_month
+
+
+def _normalize_funnel_rows(report_json, funnel_name, source_medium):
+    funnel_table = report_json.get("funnelTable") or {}
+    dimension_headers = [h.get("name", "") for h in funnel_table.get("dimensionHeaders", [])]
+    metric_headers = [h.get("name", "") for h in funnel_table.get("metricHeaders", [])]
+    rows = funnel_table.get("rows", [])
+
+    normalized = []
+    stage1_users = None
+    previous_stage_users = None
+
+    for row in rows:
+        row_dimensions = _extract_value_list(row.get("dimensionValues", []))
+        row_metrics = _extract_value_list(row.get("metricValues", []))
+        row_dimension_map = {
+            name: row_dimensions[i] if i < len(row_dimensions) else ""
+            for i, name in enumerate(dimension_headers)
+        }
+        row_metric_map = {
+            name: row_metrics[i] if i < len(row_metrics) else ""
+            for i, name in enumerate(metric_headers)
+        }
+
+        stage_number = _to_int(
+            row_dimension_map.get("funnelStepIndex")
+            or row_dimension_map.get("step")
+            or row_dimension_map.get("stepIndex")
+        )
+        stage_name = (
+            row_dimension_map.get("funnelStepName")
+            or row_dimension_map.get("stepName")
+            or row_dimension_map.get("funnelStep")
+            or f"Stage {stage_number if stage_number is not None else len(normalized) + 1}"
+        )
+        users = _first_numeric_metric(
+            row_metric_map,
+            (
+                "activeUsers",
+                "totalUsers",
+                "funnelStepUsers",
+                "users",
+            ),
+        )
+
+        if stage_number is None:
+            stage_number = len(normalized) + 1
+
+        if stage1_users is None and users is not None:
+            stage1_users = users
+        if previous_stage_users is None and users is not None:
+            previous_stage_users = users
+
+        conversion_rate = None
+        if stage1_users and users is not None:
+            conversion_rate = round((users / stage1_users) * 100.0, 4)
+
+        step_drop_off = None
+        if previous_stage_users is not None and users is not None and previous_stage_users > 0:
+            step_drop_off = round(((previous_stage_users - users) / previous_stage_users) * 100.0, 4)
+
+        normalized.append(
+            {
+                "funnel_name": funnel_name,
+                "stage_number": stage_number,
+                "stage_name": stage_name,
+                "users": users,
+                "conversion_rate": conversion_rate,
+                "step_drop_off": step_drop_off,
+                "source_medium": source_medium or row_dimension_map.get("sessionSourceMedium", ""),
+                "dimensions": row_dimension_map,
+                "metrics": row_metric_map,
+            }
+        )
+
+        if users is not None:
+            previous_stage_users = users
+
+    return normalized
+
+
+def _extract_value_list(values):
+    extracted = []
+    for value in values:
+        if isinstance(value, dict):
+            extracted.append(value.get("value", ""))
+        else:
+            extracted.append(value)
+    return extracted
+
+
+def _to_int(value):
+    if value is None or value == "":
+        return None
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _to_float(value):
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _first_numeric_metric(metric_map, preferred_keys):
+    for key in preferred_keys:
+        metric_value = _to_float(metric_map.get(key))
+        if metric_value is not None:
+            return metric_value
+
+    for metric_value_raw in metric_map.values():
+        metric_value = _to_float(metric_value_raw)
+        if metric_value is not None:
+            return metric_value
+
+    return None
