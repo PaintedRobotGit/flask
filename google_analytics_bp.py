@@ -92,14 +92,24 @@ def google_analytics_report():
             }
         ), 502
 
-    return jsonify(
-        {
-            "status": "ok",
-            "propertyID": property_id,
-            "report_type": report_type,
-            "data": response.json(),
-        }
-    ), 200
+    response_json = response.json()
+    result = {
+        "status": "ok",
+        "propertyID": property_id,
+        "report_type": report_type,
+        "data": response_json,
+    }
+
+    if report_type in ("site_journey_flow", "site_journey_flow_deep"):
+        depth = _to_int(payload.get("journey_depth")) or 4
+        top_paths = _to_int(payload.get("journey_top_paths")) or 50
+        result["journey_paths"] = _build_deep_journey_paths(
+            response_json=response_json,
+            depth=max(2, min(depth, 8)),
+            top_paths=max(10, min(top_paths, 200)),
+        )
+
+    return jsonify(result), 200
 
 
 def _extract_payload():
@@ -181,35 +191,102 @@ def _build_report_request(report_type: str, query=None):
             "dimensions": [{"name": "sessionDefaultChannelGroup"}],
             "metrics": [
                 {"name": "sessions"},
-                {"name": "totalUsers"},
-                {"name": "newUsers"},
                 {"name": "engagedSessions"},
-                {"name": "engagementRate"},
-                {"name": "conversions"},
             ],
             "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
             "limit": 100,
         },
-        "user_acquisition_by_source": {
+        "acquisition_overview_active_new_users": {
             "dateRanges": last_month_range,
-            "dimensions": [{"name": "firstUserSourceMedium"}],
+            "dimensions": [{"name": "date"}],
+            "metrics": [
+                {"name": "activeUsers"},
+                {"name": "newUsers"},
+            ],
+            "orderBys": [{"dimension": {"dimensionName": "date"}}],
+            "limit": 1000,
+        },
+        "acquisition_overview_new_users_by_primary_channel": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "firstUserPrimaryChannelGroup"}],
             "metrics": [
                 {"name": "newUsers"},
-                {"name": "totalUsers"},
-                {"name": "sessions"},
-                {"name": "conversions"},
             ],
             "orderBys": [{"metric": {"metricName": "newUsers"}, "desc": True}],
             "limit": 200,
         },
-        "google_organic_search_traffic": {
+        "acquisition_overview_sessions_by_default_channel": {
             "dateRanges": last_month_range,
-            "dimensions": [{"name": "landingPage"}],
+            "dimensions": [{"name": "sessionDefaultChannelGroup"}],
             "metrics": [
                 {"name": "sessions"},
-                {"name": "totalUsers"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "acquisition_overview_sessions_by_google_ads_campaign": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "sessionGoogleAdsCampaignName"}],
+            "metrics": [
+                {"name": "sessions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "acquisition_overview_average_120d_value": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "date"}],
+            "metrics": [
+                {"name": "average120dValue"},
+            ],
+            "orderBys": [{"dimension": {"dimensionName": "date"}}],
+            "limit": 1000,
+        },
+        "acquisition_overview_organic_impressions_by_landing_page": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "landingPagePlusQueryString"}],
+            "metrics": [
+                {"name": "organicGoogleSearchImpressions"},
+            ],
+            "orderBys": [
+                {"metric": {"metricName": "organicGoogleSearchImpressions"}, "desc": True}
+            ],
+            "limit": 200,
+        },
+        "acquisition_overview_organic_clicks_by_search_query": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "organicGoogleSearchQuery"}],
+            "metrics": [
+                {"name": "organicGoogleSearchClicks"},
+            ],
+            "orderBys": [
+                {"metric": {"metricName": "organicGoogleSearchClicks"}, "desc": True}
+            ],
+            "limit": 200,
+        },
+        "user_acquisition_by_source": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "firstUserPrimaryChannelGroup"}],
+            "metrics": [
                 {"name": "newUsers"},
-                {"name": "engagedSessions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "newUsers"}, "desc": True}],
+            "limit": 200,
+        },
+        "sessions_by_google_ads_campaign": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "sessionGoogleAdsCampaignName"}],
+            "metrics": [
+                {"name": "sessions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 200,
+        },
+        "google_organic_search_traffic": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "landingPagePlusQueryString"}],
+            "metrics": [
+                {"name": "organicGoogleSearchClicks"},
             ],
             "dimensionFilter": {
                 "andGroup": {
@@ -237,7 +314,20 @@ def _build_report_request(report_type: str, query=None):
                     ]
                 }
             },
-            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "orderBys": [
+                {"metric": {"metricName": "organicGoogleSearchClicks"}, "desc": True}
+            ],
+            "limit": 200,
+        },
+        "organic_google_search_queries": {
+            "dateRanges": last_month_range,
+            "dimensions": [{"name": "organicGoogleSearchQuery"}],
+            "metrics": [
+                {"name": "organicGoogleSearchClicks"},
+            ],
+            "orderBys": [
+                {"metric": {"metricName": "organicGoogleSearchClicks"}, "desc": True}
+            ],
             "limit": 200,
         },
         "acquisition_queries": {
@@ -346,6 +436,40 @@ def _build_report_request(report_type: str, query=None):
                 {"metric": {"metricName": "screenPageViews"}, "desc": True}
             ],
             "limit": 200,
+        },
+        "site_journey_flow": {
+            "dateRanges": last_month_range,
+            "dimensions": [
+                {"name": "pageReferrer"},
+                {"name": "pagePath"},
+                {"name": "pageTitle"},
+            ],
+            "metrics": [{"name": "activeUsers"}, {"name": "screenPageViews"}],
+            "dimensionFilter": {
+                "filter": {
+                    "fieldName": "eventName",
+                    "stringFilter": {"matchType": "EXACT", "value": "page_view"},
+                }
+            },
+            "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
+            "limit": 1000,
+        },
+        "site_journey_flow_deep": {
+            "dateRanges": last_month_range,
+            "dimensions": [
+                {"name": "pageReferrer"},
+                {"name": "pagePath"},
+                {"name": "pageTitle"},
+            ],
+            "metrics": [{"name": "activeUsers"}, {"name": "screenPageViews"}],
+            "dimensionFilter": {
+                "filter": {
+                    "fieldName": "eventName",
+                    "stringFilter": {"matchType": "EXACT", "value": "page_view"},
+                }
+            },
+            "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
+            "limit": 1000,
         },
         "landing_page": {
             "dateRanges": last_month_range,
@@ -690,3 +814,155 @@ def _get_last_month_range():
     last_of_previous_month = first_of_current_month - timedelta(days=1)
     first_of_previous_month = last_of_previous_month.replace(day=1)
     return first_of_previous_month, last_of_previous_month
+
+
+def _to_int(value):
+    try:
+        return int(value)
+    except Exception:
+        return None
+
+
+def _to_float(value):
+    try:
+        return float(value)
+    except Exception:
+        return None
+
+
+def _build_deep_journey_paths(*, response_json, depth, top_paths):
+    rows = response_json.get("rows", [])
+    dimension_headers = [h.get("name", "") for h in response_json.get("dimensionHeaders", [])]
+    metric_headers = [h.get("name", "") for h in response_json.get("metricHeaders", [])]
+
+    idx_referrer = _header_index(dimension_headers, "pageReferrer")
+    idx_path = _header_index(dimension_headers, "pagePath")
+    idx_title = _header_index(dimension_headers, "pageTitle")
+    idx_users = _header_index(metric_headers, "activeUsers")
+    if idx_users is None:
+        idx_users = 0
+
+    edges = {}
+    outgoing_totals = {}
+    for row in rows:
+        dvals = [v.get("value", "") for v in row.get("dimensionValues", [])]
+        mvals = [v.get("value", "") for v in row.get("metricValues", [])]
+
+        referrer = _extract_path(dvals[idx_referrer]) if idx_referrer is not None and idx_referrer < len(dvals) else "(entry)"
+        path = dvals[idx_path] if idx_path is not None and idx_path < len(dvals) else ""
+        title = dvals[idx_title] if idx_title is not None and idx_title < len(dvals) else ""
+        users = _to_float(mvals[idx_users]) if idx_users < len(mvals) else 0.0
+        if not path or users is None or users <= 0:
+            continue
+
+        source = referrer or "(entry)"
+        target = title.strip() or path.strip()
+        key = (source, target)
+        edges[key] = edges.get(key, 0.0) + users
+        outgoing_totals[source] = outgoing_totals.get(source, 0.0) + users
+
+    adjacency = {}
+    for (source, target), users in edges.items():
+        prob = users / outgoing_totals[source] if outgoing_totals.get(source) else 0.0
+        adjacency.setdefault(source, []).append(
+            {"target": target, "users": users, "transition_probability": prob}
+        )
+
+    for source in adjacency:
+        adjacency[source].sort(key=lambda x: x["users"], reverse=True)
+        adjacency[source] = adjacency[source][:25]
+
+    start_node = "(entry)"
+    initial_edges = adjacency.get(start_node, [])
+    if not initial_edges:
+        initial_edges = []
+        for source, transitions in adjacency.items():
+            if source.startswith("http"):
+                initial_edges.extend(transitions)
+        initial_edges.sort(key=lambda x: x["users"], reverse=True)
+        initial_edges = initial_edges[:25]
+
+    paths = []
+    for edge in initial_edges:
+        _dfs_paths(
+            adjacency=adjacency,
+            current_node=edge["target"],
+            current_path=[edge["target"]],
+            cumulative_users=edge["users"],
+            cumulative_prob=edge["transition_probability"],
+            max_depth=depth,
+            paths=paths,
+            visited={edge["target"]},
+        )
+
+    paths.sort(key=lambda x: (x["estimated_users"], x["path_probability"]), reverse=True)
+    return paths[:top_paths]
+
+
+def _dfs_paths(
+    *,
+    adjacency,
+    current_node,
+    current_path,
+    cumulative_users,
+    cumulative_prob,
+    max_depth,
+    paths,
+    visited,
+):
+    paths.append(
+        {
+            "path": current_path.copy(),
+            "estimated_users": round(cumulative_users, 2),
+            "path_probability": round(cumulative_prob, 6),
+            "depth": len(current_path),
+        }
+    )
+
+    if len(current_path) >= max_depth:
+        return
+
+    for edge in adjacency.get(current_node, []):
+        next_node = edge["target"]
+        if next_node in visited:
+            continue
+        _dfs_paths(
+            adjacency=adjacency,
+            current_node=next_node,
+            current_path=current_path + [next_node],
+            cumulative_users=min(cumulative_users, edge["users"]),
+            cumulative_prob=cumulative_prob * edge["transition_probability"],
+            max_depth=max_depth,
+            paths=paths,
+            visited=visited | {next_node},
+        )
+
+
+def _header_index(headers, name):
+    for i, header in enumerate(headers):
+        if header == name:
+            return i
+    return None
+
+
+def _extract_path(referrer):
+    if not referrer:
+        return "(entry)"
+    value = str(referrer).strip()
+    if not value:
+        return "(entry)"
+
+    marker = "://"
+    idx = value.find(marker)
+    if idx >= 0:
+        slash_idx = value.find("/", idx + len(marker))
+        if slash_idx >= 0:
+            value = value[slash_idx:]
+        else:
+            value = "/"
+
+    q_idx = value.find("?")
+    if q_idx >= 0:
+        value = value[:q_idx]
+
+    return value or "(entry)"
