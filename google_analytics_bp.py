@@ -140,20 +140,23 @@ def _get_google_access_token(*, client_email: str, private_key: str) -> str:
 
 
 def _build_report_request(report_type: str):
+    last_30_days = [{"startDate": "30daysAgo", "endDate": "yesterday"}]
+
     reports = {
         "overview": {
-            "dateRanges": [{"startDate": "7daysAgo", "endDate": "yesterday"}],
+            "dateRanges": last_30_days,
             "dimensions": [{"name": "date"}],
             "metrics": [
                 {"name": "activeUsers"},
                 {"name": "newUsers"},
                 {"name": "sessions"},
                 {"name": "screenPageViews"},
+                {"name": "conversions"},
             ],
             "limit": 1000,
         },
         "traffic_sources": {
-            "dateRanges": [{"startDate": "30daysAgo", "endDate": "yesterday"}],
+            "dateRanges": last_30_days,
             "dimensions": [{"name": "sessionSourceMedium"}],
             "metrics": [
                 {"name": "sessions"},
@@ -164,7 +167,7 @@ def _build_report_request(report_type: str):
             "limit": 100,
         },
         "top_pages": {
-            "dateRanges": [{"startDate": "30daysAgo", "endDate": "yesterday"}],
+            "dateRanges": last_30_days,
             "dimensions": [{"name": "pagePath"}],
             "metrics": [
                 {"name": "screenPageViews"},
@@ -175,6 +178,105 @@ def _build_report_request(report_type: str):
                 {"metric": {"metricName": "screenPageViews"}, "desc": True}
             ],
             "limit": 100,
+        },
+        "landing_pages": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "landingPage"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "engagedSessions"},
+                {"name": "conversions"},
+                {"name": "bounceRate"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 100,
+        },
+        "geo_countries": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "country"}],
+            "metrics": [
+                {"name": "activeUsers"},
+                {"name": "sessions"},
+                {"name": "conversions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
+            "limit": 100,
+        },
+        "geo_cities": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "city"}],
+            "metrics": [
+                {"name": "activeUsers"},
+                {"name": "sessions"},
+                {"name": "conversions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
+            "limit": 100,
+        },
+        "devices": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "deviceCategory"}],
+            "metrics": [
+                {"name": "activeUsers"},
+                {"name": "sessions"},
+                {"name": "engagedSessions"},
+            ],
+            "orderBys": [{"metric": {"metricName": "activeUsers"}, "desc": True}],
+            "limit": 10,
+        },
+        "channels": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "sessionDefaultChannelGroup"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "engagedSessions"},
+                {"name": "conversions"},
+                {"name": "totalRevenue"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 50,
+        },
+        "campaigns": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "sessionCampaignName"}],
+            "metrics": [
+                {"name": "sessions"},
+                {"name": "engagedSessions"},
+                {"name": "conversions"},
+                {"name": "totalRevenue"},
+            ],
+            "orderBys": [{"metric": {"metricName": "sessions"}, "desc": True}],
+            "limit": 100,
+        },
+        "events": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "eventName"}],
+            "metrics": [
+                {"name": "eventCount"},
+                {"name": "totalUsers"},
+                {"name": "eventCountPerUser"},
+            ],
+            "orderBys": [{"metric": {"metricName": "eventCount"}, "desc": True}],
+            "limit": 100,
+        },
+        "hourly_trend": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "hour"}],
+            "metrics": [{"name": "activeUsers"}, {"name": "sessions"}],
+            "orderBys": [{"dimension": {"dimensionName": "hour"}}],
+            "limit": 24,
+        },
+        "daily_trend": {
+            "dateRanges": last_30_days,
+            "dimensions": [{"name": "date"}],
+            "metrics": [
+                {"name": "activeUsers"},
+                {"name": "sessions"},
+                {"name": "conversions"},
+                {"name": "totalRevenue"},
+            ],
+            "orderBys": [{"dimension": {"dimensionName": "date"}}],
+            "limit": 1000,
         },
     }
 
