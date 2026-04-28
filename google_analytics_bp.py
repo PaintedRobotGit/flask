@@ -106,7 +106,7 @@ def google_analytics_report():
         journey_paths = _build_deep_journey_paths(
             response_json=response_json,
             depth=max(2, min(depth, 8)),
-            top_paths=max(10, min(top_paths, 200)),
+            top_paths=max(10, min(top_paths, 500)),
         )
         result = {
             "status": "ok",
@@ -115,7 +115,7 @@ def google_analytics_report():
             "journey_paths": journey_paths,
             "journey_meta": {
                 "depth": max(2, min(depth, 8)),
-                "top_paths": max(10, min(top_paths, 200)),
+                "top_paths": max(10, min(top_paths, 500)),
                 "fetched_row_count": response_json.get("fetchedRowCount")
                 or len(response_json.get("rows", [])),
             },
