@@ -284,7 +284,7 @@ def _build_report_request(report_type: str, query=None):
             "limit": 1000,
         },
         "monthly_channel_breakdown": {
-            "reports": [
+            "requests": [
                 {
                     "dateRanges": [
                         {
@@ -390,7 +390,7 @@ def _parse_custom_query(query):
 
 def _is_batch_report(report_request):
     return isinstance(report_request, dict) and isinstance(
-        report_request.get("reports"), list
+        report_request.get("requests"), list
     )
 
 
