@@ -381,10 +381,7 @@ def _normalize_funnel_rows(report_json, funnel_name, source_medium):
             name: row_dimensions[i] if i < len(row_dimensions) else ""
             for i, name in enumerate(dimension_headers)
         }
-        row_metric_map = {
-            name: row_metrics[i] if i < len(row_metrics) else ""
-            for i, name in enumerate(metric_headers)
-        }
+        row_metric_map = _build_metric_map(metric_headers, row_metrics)
 
         stage_number = _to_int(
             row_dimension_map.get("funnelStepIndex")
@@ -483,3 +480,20 @@ def _first_numeric_metric(metric_map, preferred_keys):
             return metric_value
 
     return None
+
+
+def _build_metric_map(metric_headers, row_metrics):
+    metric_map = {}
+    for i, name in enumerate(metric_headers):
+        value = row_metrics[i] if i < len(row_metrics) else ""
+        existing = metric_map.get(name)
+
+        # Preserve first meaningful metric value when headers repeat.
+        if existing not in (None, "") and value in (None, ""):
+            continue
+        if existing not in (None, "") and value not in (None, ""):
+            continue
+
+        metric_map[name] = value
+
+    return metric_map
