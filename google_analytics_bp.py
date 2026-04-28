@@ -102,7 +102,7 @@ def google_analytics_report():
 
     if report_type in ("site_journey_flow", "site_journey_flow_deep"):
         depth = _to_int(payload.get("journey_depth")) or 4
-        top_paths = _to_int(payload.get("journey_top_paths")) or 50
+        top_paths = 200
         journey_paths = _build_deep_journey_paths(
             response_json=response_json,
             depth=max(2, min(depth, 8)),
