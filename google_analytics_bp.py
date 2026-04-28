@@ -1,6 +1,7 @@
 from flask import Blueprint, jsonify, request
 from google.auth.transport.requests import Request as GoogleAuthRequest
 from google.oauth2 import service_account
+import json
 import requests
 
 
@@ -12,7 +13,7 @@ GA_API_BASE = "https://analyticsdata.googleapis.com/v1beta"
 
 @google_analytics_bp.route("/google_analytics_report", methods=["POST"])
 def google_analytics_report():
-    payload = request.get_json(silent=True) or {}
+    payload = _extract_payload()
 
     client_email = str(payload.get("clientEmail", "")).strip()
     private_key = str(payload.get("privateKey", "")).strip()
@@ -97,6 +98,28 @@ def google_analytics_report():
             "data": response.json(),
         }
     ), 200
+
+
+def _extract_payload():
+    # Prefer JSON payloads, but allow form-encoded bodies from tools like Deluge.
+    json_payload = request.get_json(silent=True)
+    if isinstance(json_payload, dict):
+        return json_payload
+
+    form_payload = request.form.to_dict(flat=True)
+    if form_payload:
+        return form_payload
+
+    raw_body = request.get_data(cache=False, as_text=True) or ""
+    if raw_body:
+        try:
+            parsed = json.loads(raw_body)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+    return {}
 
 
 def _get_google_access_token(*, client_email: str, private_key: str) -> str:
