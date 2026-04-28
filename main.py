@@ -4,6 +4,7 @@ from company_validation import company_validation_bp
 from zoho_bp import zoho_bp
 from daily_brief import daily_brief_bp
 from google_analytics_bp import google_analytics_bp
+from google_analytics_funnel_bp import google_analytics_funnel_bp
 import os
 
 app = Flask(__name__)
@@ -12,6 +13,7 @@ app.register_blueprint(company_validation_bp)
 app.register_blueprint(zoho_bp)
 app.register_blueprint(daily_brief_bp)
 app.register_blueprint(google_analytics_bp)
+app.register_blueprint(google_analytics_funnel_bp)
 
 # Add CORS headers
 @app.after_request
