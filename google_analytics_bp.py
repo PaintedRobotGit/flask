@@ -949,10 +949,10 @@ def _dfs_paths(
 ):
     paths.append(
         {
-            "p": current_path.copy(),
+            "path": current_path.copy(),
             "est_users": round(cumulative_users, 2),
             "prob": round(cumulative_prob, 6),
-            "d": len(current_path),
+            "depth": len(current_path),
         }
     )
 
