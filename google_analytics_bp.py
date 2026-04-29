@@ -102,11 +102,11 @@ def google_analytics_report():
 
     if report_type in ("site_journey_flow", "site_journey_flow_deep"):
         depth = _to_int(payload.get("journey_depth")) or 4
-        top_paths = 500
+        top_paths = 250
         journey_paths = _build_deep_journey_paths(
             response_json=response_json,
             depth=max(2, min(depth, 8)),
-            top_paths=max(10, min(top_paths, 500)),
+            top_paths=max(10, min(top_paths, 250)),
         )
         result = {
             "status": "ok",
@@ -115,11 +115,12 @@ def google_analytics_report():
             "journey_paths": journey_paths,
             "journey_meta": {
                 "depth": max(2, min(depth, 8)),
-                "top_paths": max(10, min(top_paths, 500)),
+                "top_paths": max(10, min(top_paths, 250)),
                 "fetched_row_count": response_json.get("fetchedRowCount")
                 or len(response_json.get("rows", [])),
             },
         }
+        result = _fit_journey_payload_size(result=result, char_limit=65535)
     else:
         result = {
             "status": "ok",
@@ -930,7 +931,7 @@ def _build_deep_journey_paths(*, response_json, depth, top_paths):
             page_labels=page_labels,
         )
 
-    paths.sort(key=lambda x: (x["estimated_users"], x["path_probability"]), reverse=True)
+    paths.sort(key=lambda x: (x["est_users"], x["prob"]), reverse=True)
     return paths[:top_paths]
 
 
@@ -948,10 +949,10 @@ def _dfs_paths(
 ):
     paths.append(
         {
-            "path": current_path.copy(),
-            "estimated_users": round(cumulative_users, 2),
-            "path_probability": round(cumulative_prob, 6),
-            "depth": len(current_path),
+            "p": current_path.copy(),
+            "est_users": round(cumulative_users, 2),
+            "prob": round(cumulative_prob, 6),
+            "d": len(current_path),
         }
     )
 
@@ -1019,6 +1020,47 @@ def _normalize_path(value):
             return parsed
         parsed = "/" + parsed
     return parsed
+
+
+def _fit_journey_payload_size(*, result, char_limit):
+    paths = result.get("journey_paths") or []
+    meta = result.setdefault("journey_meta", {})
+    current_size = _json_char_count(result)
+    if current_size <= char_limit:
+        meta["returned_paths"] = len(paths)
+        meta["trimmed_for_size"] = False
+        meta["char_count"] = current_size
+        meta["char_limit"] = char_limit
+        return result
+
+    low = 0
+    high = len(paths)
+    best_count = 0
+    best_size = None
+
+    while low <= high:
+        mid = (low + high) // 2
+        candidate = dict(result)
+        candidate["journey_paths"] = paths[:mid]
+        size = _json_char_count(candidate)
+        if size <= char_limit:
+            best_count = mid
+            best_size = size
+            low = mid + 1
+        else:
+            high = mid - 1
+
+    result["journey_paths"] = paths[:best_count]
+    final_size = best_size if best_size is not None else _json_char_count(result)
+    meta["returned_paths"] = best_count
+    meta["trimmed_for_size"] = best_count < len(paths)
+    meta["char_count"] = final_size
+    meta["char_limit"] = char_limit
+    return result
+
+
+def _json_char_count(value):
+    return len(json.dumps(value, separators=(",", ":"), ensure_ascii=False))
 
 
 def _fetch_all_run_report_rows(*, access_token, property_id, report_request):
