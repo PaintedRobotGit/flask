@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+import os
 import json
 import requests
 
@@ -107,6 +108,118 @@ def google_ads_report():
             "status": "ok",
             "customerID": customer_id,
             "report_type": report_type,
+            "data": response_json,
+        }
+    ), 200
+
+
+@google_ads_bp.route("/google_ads_test", methods=["GET"])
+def google_ads_test():
+    """Browser-hittable smoke test. Reads credentials from env vars on the server.
+    Optional query params: ?report_type=campaign_performance&customerId=1234567890
+    """
+    client_id = (os.environ.get("GOOGLE_ADS_CLIENT_ID") or "").strip()
+    client_secret = (os.environ.get("GOOGLE_ADS_CLIENT_SECRET") or "").strip()
+    developer_token = (os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN") or "").strip()
+    refresh_token = (os.environ.get("GOOGLE_ADS_REFRESH_TOKEN") or "").strip()
+    login_customer_id = _normalize_customer_id(
+        os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "")
+    )
+    customer_id = _normalize_customer_id(
+        request.args.get("customerId") or os.environ.get("GOOGLE_ADS_CUSTOMER_ID", "")
+    )
+    report_type = (request.args.get("report_type") or "campaign_performance").strip().lower()
+
+    missing = [
+        name
+        for name, value in (
+            ("GOOGLE_ADS_CLIENT_ID", client_id),
+            ("GOOGLE_ADS_CLIENT_SECRET", client_secret),
+            ("GOOGLE_ADS_DEVELOPER_TOKEN", developer_token),
+            ("GOOGLE_ADS_REFRESH_TOKEN", refresh_token),
+            ("GOOGLE_ADS_CUSTOMER_ID", customer_id),
+        )
+        if not value
+    ]
+    if missing:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "Missing environment variables (set these in Railway)",
+                "missing_env_vars": missing,
+            }
+        ), 400
+
+    try:
+        access_token = _get_google_access_token(
+            client_id=client_id,
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+        )
+    except Exception as auth_error:
+        return jsonify(
+            {
+                "status": "error",
+                "step": "token_exchange",
+                "message": "Failed to get access token from refresh token",
+                "details": str(auth_error),
+            }
+        ), 400
+
+    try:
+        gaql_query = _build_gaql_query(report_type, None)
+    except ValueError as value_error:
+        return jsonify({"status": "error", "message": str(value_error)}), 400
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "developer-token": developer_token,
+        "Content-Type": "application/json",
+    }
+    if login_customer_id:
+        headers["login-customer-id"] = login_customer_id
+
+    try:
+        response_json = _fetch_all_search_rows(
+            headers=headers,
+            customer_id=customer_id,
+            gaql_query=gaql_query,
+        )
+    except requests.HTTPError as http_error:
+        error_body = None
+        if http_error.response is not None:
+            try:
+                error_body = http_error.response.json()
+            except Exception:
+                error_body = http_error.response.text
+        return jsonify(
+            {
+                "status": "error",
+                "step": "ads_query",
+                "message": "Google Ads API HTTP error",
+                "details": str(http_error),
+                "response": error_body,
+            }
+        ), http_error.response.status_code if http_error.response else 502
+    except requests.RequestException as request_error:
+        return jsonify(
+            {
+                "status": "error",
+                "step": "ads_query",
+                "message": "Google Ads API request failed",
+                "details": str(request_error),
+            }
+        ), 502
+
+    rows = response_json.get("results", [])
+    return jsonify(
+        {
+            "status": "ok",
+            "customerID": customer_id,
+            "report_type": report_type,
+            "rowCount": response_json.get("rowCount"),
+            "fieldMask": response_json.get("fieldMask"),
+            "first_row": rows[0] if rows else None,
             "data": response_json,
         }
     ), 200
