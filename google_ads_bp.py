@@ -196,61 +196,65 @@ def google_ads_accounts():
             }
         ), http_error.response.status_code if http_error.response else 502
 
-    # 2) If we know the manager (MCC) id, list its child accounts with names.
-    child_accounts = []
-    manager_id = login_customer_id or (accessible[0] if accessible else "")
-    if manager_id:
+    # 2) Try to expand each accessible account into its children. Some accessible
+    # accounts may be deactivated or non-managers; we report per-account instead of
+    # failing on the first bad one. Optional ?manager=ID limits to a single account.
+    requested = _normalize_customer_id(request.args.get("manager", "")) or login_customer_id
+    targets = [requested] if requested else list(accessible)
+
+    query = (
+        "SELECT customer_client.id, customer_client.descriptive_name, "
+        "customer_client.manager, customer_client.level, customer_client.status, "
+        "customer_client.currency_code FROM customer_client "
+        "WHERE customer_client.status = 'ENABLED'"
+    )
+
+    expansions = []
+    client_accounts = []
+    seen_ids = set()
+    for mid in targets:
         headers = dict(base_headers)
-        headers["login-customer-id"] = manager_id
-        query = (
-            "SELECT customer_client.id, customer_client.descriptive_name, "
-            "customer_client.manager, customer_client.level, customer_client.status, "
-            "customer_client.currency_code FROM customer_client "
-            "WHERE customer_client.status = 'ENABLED'"
-        )
+        headers["login-customer-id"] = mid
         try:
             result = _fetch_all_search_rows(
-                headers=headers, customer_id=manager_id, gaql_query=query
+                headers=headers, customer_id=mid, gaql_query=query
             )
+            accounts = []
             for row in result.get("results", []):
                 cc = row.get("customerClient", {})
-                child_accounts.append(
-                    {
-                        "id": cc.get("id"),
-                        "name": cc.get("descriptiveName"),
-                        "is_manager": cc.get("manager"),
-                        "level": cc.get("level"),
-                        "currency": cc.get("currencyCode"),
-                    }
-                )
+                entry = {
+                    "id": cc.get("id"),
+                    "name": cc.get("descriptiveName"),
+                    "is_manager": cc.get("manager"),
+                    "level": cc.get("level"),
+                    "currency": cc.get("currencyCode"),
+                }
+                accounts.append(entry)
+                # Collect usable (non-manager) client accounts, de-duped.
+                if not cc.get("manager") and entry["id"] and entry["id"] not in seen_ids:
+                    seen_ids.add(entry["id"])
+                    client_accounts.append(entry)
+            expansions.append({"queried": mid, "ok": True, "count": len(accounts), "accounts": accounts})
         except requests.HTTPError as http_error:
-            error_body = None
+            code = None
             if http_error.response is not None:
                 try:
-                    error_body = http_error.response.json()
+                    gerr = http_error.response.json().get("error", {})
+                    sub = (gerr.get("details") or [{}])[0].get("errors") or [{}]
+                    code = sub[0].get("errorCode") or {"http": gerr.get("code")}
                 except Exception:
-                    error_body = http_error.response.text
-            return jsonify(
-                {
-                    "status": "partial",
-                    "message": "Listed accessible accounts, but failed to expand the manager's children. "
-                    "If accessible_customers below shows your MCC id, set it as "
-                    "GOOGLE_ADS_LOGIN_CUSTOMER_ID and retry.",
-                    "accessible_customers": accessible,
-                    "step": "list_customer_clients",
-                    "manager_id_tried": manager_id,
-                    "details": str(http_error),
-                    "response": error_body,
-                }
-            ), 200
+                    code = {"http": http_error.response.status_code}
+            expansions.append({"queried": mid, "ok": False, "error": code})
 
     return jsonify(
         {
             "status": "ok",
             "accessible_customers": accessible,
-            "manager_id_used": manager_id,
-            "child_accounts": child_accounts,
-            "hint": "Use a non-manager id from child_accounts as customerId, and your MCC id as loginCustomerId.",
+            "client_accounts": client_accounts,
+            "expansions": expansions,
+            "hint": "Pick an id from client_accounts as customerId. Set the manager id "
+            "(the 'queried' value whose ok=true and that owns the children) as "
+            "GOOGLE_ADS_LOGIN_CUSTOMER_ID.",
         }
     ), 200
 
