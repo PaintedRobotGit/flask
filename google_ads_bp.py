@@ -113,6 +113,148 @@ def google_ads_report():
     ), 200
 
 
+@google_ads_bp.route("/google_ads_accounts", methods=["GET"])
+def google_ads_accounts():
+    """Discover which account IDs this refresh token can see — so you don't have to
+    ask anyone. Reads creds from env vars. Returns the top-level accessible accounts
+    and, if GOOGLE_ADS_LOGIN_CUSTOMER_ID is set, the child accounts under that manager.
+    """
+    client_id = (os.environ.get("GOOGLE_ADS_CLIENT_ID") or "").strip()
+    client_secret = (os.environ.get("GOOGLE_ADS_CLIENT_SECRET") or "").strip()
+    developer_token = (os.environ.get("GOOGLE_ADS_DEVELOPER_TOKEN") or "").strip()
+    refresh_token = (os.environ.get("GOOGLE_ADS_REFRESH_TOKEN") or "").strip()
+    login_customer_id = _normalize_customer_id(
+        os.environ.get("GOOGLE_ADS_LOGIN_CUSTOMER_ID", "")
+    )
+
+    missing = [
+        name
+        for name, value in (
+            ("GOOGLE_ADS_CLIENT_ID", client_id),
+            ("GOOGLE_ADS_CLIENT_SECRET", client_secret),
+            ("GOOGLE_ADS_DEVELOPER_TOKEN", developer_token),
+            ("GOOGLE_ADS_REFRESH_TOKEN", refresh_token),
+        )
+        if not value
+    ]
+    if missing:
+        return jsonify(
+            {
+                "status": "error",
+                "message": "Missing environment variables (set these in Railway)",
+                "missing_env_vars": missing,
+            }
+        ), 400
+
+    try:
+        access_token = _get_google_access_token(
+            client_id=client_id,
+            client_secret=client_secret,
+            refresh_token=refresh_token,
+        )
+    except Exception as auth_error:
+        return jsonify(
+            {
+                "status": "error",
+                "step": "token_exchange",
+                "message": "Failed to get access token from refresh token",
+                "details": str(auth_error),
+            }
+        ), 400
+
+    base_headers = {
+        "Authorization": f"Bearer {access_token}",
+        "developer-token": developer_token,
+        "Content-Type": "application/json",
+    }
+
+    # 1) Top-level accounts this token can directly access.
+    try:
+        resp = requests.get(
+            f"{GOOGLE_ADS_API_BASE}/customers:listAccessibleCustomers",
+            headers=base_headers,
+            timeout=(10, 30),
+        )
+        resp.raise_for_status()
+        accessible = [
+            _normalize_customer_id(name)
+            for name in resp.json().get("resourceNames", [])
+        ]
+    except requests.HTTPError as http_error:
+        error_body = None
+        if http_error.response is not None:
+            try:
+                error_body = http_error.response.json()
+            except Exception:
+                error_body = http_error.response.text
+        return jsonify(
+            {
+                "status": "error",
+                "step": "list_accessible_customers",
+                "details": str(http_error),
+                "response": error_body,
+            }
+        ), http_error.response.status_code if http_error.response else 502
+
+    # 2) If we know the manager (MCC) id, list its child accounts with names.
+    child_accounts = []
+    manager_id = login_customer_id or (accessible[0] if accessible else "")
+    if manager_id:
+        headers = dict(base_headers)
+        headers["login-customer-id"] = manager_id
+        query = (
+            "SELECT customer_client.id, customer_client.descriptive_name, "
+            "customer_client.manager, customer_client.level, customer_client.status, "
+            "customer_client.currency_code FROM customer_client "
+            "WHERE customer_client.status = 'ENABLED'"
+        )
+        try:
+            result = _fetch_all_search_rows(
+                headers=headers, customer_id=manager_id, gaql_query=query
+            )
+            for row in result.get("results", []):
+                cc = row.get("customerClient", {})
+                child_accounts.append(
+                    {
+                        "id": cc.get("id"),
+                        "name": cc.get("descriptiveName"),
+                        "is_manager": cc.get("manager"),
+                        "level": cc.get("level"),
+                        "currency": cc.get("currencyCode"),
+                    }
+                )
+        except requests.HTTPError as http_error:
+            error_body = None
+            if http_error.response is not None:
+                try:
+                    error_body = http_error.response.json()
+                except Exception:
+                    error_body = http_error.response.text
+            return jsonify(
+                {
+                    "status": "partial",
+                    "message": "Listed accessible accounts, but failed to expand the manager's children. "
+                    "If accessible_customers below shows your MCC id, set it as "
+                    "GOOGLE_ADS_LOGIN_CUSTOMER_ID and retry.",
+                    "accessible_customers": accessible,
+                    "step": "list_customer_clients",
+                    "manager_id_tried": manager_id,
+                    "details": str(http_error),
+                    "response": error_body,
+                }
+            ), 200
+
+    return jsonify(
+        {
+            "status": "ok",
+            "accessible_customers": accessible,
+            "manager_id_used": manager_id,
+            "child_accounts": child_accounts,
+            "hint": "Use a non-manager id from child_accounts as customerId, and your MCC id as loginCustomerId.",
+        }
+    ), 200
+
+
 @google_ads_bp.route("/google_ads_test", methods=["GET"])
 def google_ads_test():
     """Browser-hittable smoke test. Reads credentials from env vars on the server.
